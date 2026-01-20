@@ -34,9 +34,10 @@ const config: Config = {
   },
   cors: {
     // Support multiple frontend origins (comma-separated in .env)
+    // If no FRONTEND_URL is set, allow common development origins
     origin: process.env.FRONTEND_URL 
       ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-      : ['http://localhost:3000', 'http://localhost:5173'],
+      : ['http://localhost:3000', 'http://localhost:5173', 'https://localhost:3000'],
   },
   rateLimit: {
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 minutes
