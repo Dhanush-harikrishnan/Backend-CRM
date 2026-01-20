@@ -495,7 +495,7 @@ class OrganizationService {
     ]);
 
     // Get customer details for top customers
-    const customerIds = topCustomers.map(c => c.customerId);
+    const customerIds = topCustomers.map(c => c.customerId).filter((id): id is number => id !== null);
     const customers = await prisma.customer.findMany({
       where: { id: { in: customerIds } },
       select: { id: true, displayName: true },
@@ -518,15 +518,15 @@ class OrganizationService {
       recentInvoices: recentInvoices.map(inv => ({
         id: inv.id,
         invoiceNumber: inv.invoiceNumber,
-        customerName: inv.customer.displayName,
+        customerName: inv.customer?.displayName || 'Walk-in Customer',
         totalAmount: Number(inv.totalAmount),
         status: inv.status,
         paymentStatus: inv.paymentStatus,
         invoiceDate: inv.invoiceDate,
         dueDate: inv.dueDate,
       })),
-      topCustomers: topCustomers.map(tc => ({
-        customer: customerMap.get(tc.customerId),
+      topCustomers: topCustomers.filter(tc => tc.customerId !== null).map(tc => ({
+        customer: customerMap.get(tc.customerId!),
         totalAmount: Number(tc._sum.totalAmount || 0),
         invoiceCount: tc._count,
       })),

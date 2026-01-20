@@ -707,7 +707,7 @@ model EstimateItem {
 model CreditNote {
   id                Int            @id @default(autoincrement())
   organizationId    String         @map("organization_id")
-  customerId        Int            @map("customer_id")
+  customerId        Int?           @map("customer_id")
   invoiceId         Int?           @map("invoice_id")
   
   creditNoteNumber  String         @map("credit_note_number") @db.VarChar(50)
@@ -744,7 +744,7 @@ model CreditNote {
   updatedAt         DateTime       @updatedAt @map("updated_at")
 
   organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  customer          Customer       @relation(fields: [customerId], references: [id])
+  customer          Customer?      @relation(fields: [customerId], references: [id])
   invoice           Invoice?       @relation(fields: [invoiceId], references: [id])
   items             CreditNoteItem[]
 
@@ -818,7 +818,7 @@ model CreditNoteItem {
 model Payment {
   id              Int      @id @default(autoincrement())
   organizationId  String   @map("organization_id")
-  customerId      Int      @map("customer_id")
+  customerId      Int?     @map("customer_id")
   invoiceId       Int?     @map("invoice_id")
   
   paymentNumber   String   @map("payment_number") @db.VarChar(50)
@@ -848,7 +848,7 @@ model Payment {
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  customer        Customer        @relation(fields: [customerId], references: [id])
+  customer        Customer?       @relation(fields: [customerId], references: [id])
   invoice         Invoice?        @relation(fields: [invoiceId], references: [id])
   bankAccount     BankAccount?    @relation(fields: [bankAccountId], references: [id])
   stripePayments  StripePayment[]

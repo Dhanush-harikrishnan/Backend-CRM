@@ -18,7 +18,7 @@ export interface CreditNoteItemInput {
 
 export interface CreateCreditNoteInput {
   organizationId: string;
-  customerId: number;
+  customerId?: number;
   invoiceId?: number;
   referenceNumber?: string;
   creditNoteDate?: Date;
@@ -471,18 +471,20 @@ class CreditNoteService {
       // Create a payment record for the credit application
       const paymentNumber = await organizationService.getNextSequenceNumber(organizationId, 'payment');
       
-      await tx.payment.create({
-        data: {
-          organizationId,
-          customerId: invoice.customerId,
-          invoiceId,
-          paymentNumber,
-          paymentDate: new Date(),
-          amount: applyAmount,
-          paymentMode: 'CASH', // Credit note application
-          notes: `Applied from Credit Note ${creditNote.creditNoteNumber}`,
-        },
-      });
+      if (invoice.customerId) {
+        await tx.payment.create({
+          data: {
+            organizationId,
+            customerId: invoice.customerId,
+            invoiceId,
+            paymentNumber,
+            paymentDate: new Date(),
+            amount: applyAmount,
+            paymentMode: 'CASH', // Credit note application
+            notes: `Applied from Credit Note ${creditNote.creditNoteNumber}`,
+          },
+        });
+      }
     });
 
     logger.info(`Credit note ${creditNote.creditNoteNumber} applied to invoice ${invoice.invoiceNumber}: ₹${applyAmount}`);
@@ -563,7 +565,7 @@ class CreditNoteService {
 
     return this.createCreditNote({
       organizationId,
-      customerId: invoice.customerId,
+      customerId: invoice.customerId ?? undefined,
       invoiceId: invoice.id,
       reason: 'RETURN',
       placeOfSupply: invoice.placeOfSupply || undefined,

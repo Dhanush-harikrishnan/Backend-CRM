@@ -303,7 +303,9 @@ class PaymentService {
     });
 
     // Update customer balance
-    await customerService.updateCustomerBalance(payment.customerId);
+    if (payment.customerId) {
+      await customerService.updateCustomerBalance(payment.customerId);
+    }
 
     logger.info(`Payment deleted: ${payment.paymentNumber}`);
     return { message: 'Payment deleted successfully' };

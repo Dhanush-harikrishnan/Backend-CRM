@@ -248,7 +248,7 @@ class ReportService {
     ]);
 
     // Get customer and product names
-    const customerIds = byCustomer.map(c => c.customerId);
+    const customerIds = byCustomer.map(c => c.customerId).filter((id): id is number => id !== null);
     const productIds = topProducts.map(p => p.productId).filter((id): id is number => id !== null);
 
     const [customers, products] = await Promise.all([
@@ -280,9 +280,9 @@ class ReportService {
         invoiceCount: totals._count,
         avgInvoiceValue: Number(totals._avg?.totalAmount || 0),
       },
-      topCustomers: byCustomer.map(c => ({
+      topCustomers: byCustomer.filter(c => c.customerId !== null).map(c => ({
         customerId: c.customerId,
-        customerName: customerMap.get(c.customerId) || 'Unknown',
+        customerName: customerMap.get(c.customerId!) || 'Unknown',
         amount: Number(c._sum?.totalAmount || 0),
         invoiceCount: c._count,
       })),

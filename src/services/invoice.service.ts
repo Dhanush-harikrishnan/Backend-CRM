@@ -196,7 +196,10 @@ class InvoiceService {
     const dueDate = parseDate(data.dueDate) || new Date(invoiceDate.getTime() + defaultPaymentTerms * 24 * 60 * 60 * 1000);
 
     // Fetch products and taxes
-    const productIds = items.filter(i => i.productId).map(i => i.productId) as number[];
+    const productIds = items
+      .filter(i => i.productId)
+      .map(i => typeof i.productId === 'string' ? parseInt(i.productId, 10) : i.productId)
+      .filter((id): id is number => typeof id === 'number' && !isNaN(id));
     const products = productIds.length > 0
       ? await prisma.product.findMany({
         where: { id: { in: productIds }, organizationId, isActive: true },
@@ -208,7 +211,8 @@ class InvoiceService {
     // Validate stock for goods
     for (const item of items) {
       if (item.productId) {
-        const product = productMap.get(item.productId);
+        const prodId = typeof item.productId === 'string' ? parseInt(item.productId, 10) : item.productId;
+        const product = productMap.get(prodId);
         if (!product) {
           throw new AppError(`Product with ID ${item.productId} not found`, 404);
         }
@@ -226,7 +230,8 @@ class InvoiceService {
     let totalCess = 0;
 
     const invoiceItems = items.map((item, index) => {
-      const product = item.productId ? productMap.get(item.productId) : null;
+      const prodId = item.productId ? (typeof item.productId === 'string' ? parseInt(item.productId, 10) : item.productId) : null;
+      const product = prodId ? productMap.get(prodId) : null;
       const tax = product?.tax || null;
 
       const amounts = this.calculateItemAmounts(item, isInterState, tax ? {
@@ -244,7 +249,7 @@ class InvoiceService {
       totalCess += amounts.cessAmount;
 
       return {
-        productId: item.productId,
+        productId: prodId,
         itemType: item.itemType || product?.type || 'GOODS',
         name: item.name || product?.name || '',
         description: item.description || product?.description,
@@ -355,10 +360,11 @@ class InvoiceService {
       // Decrement stock for goods
       for (const item of items) {
         if (item.productId) {
-          const product = productMap.get(item.productId);
+          const itemProdId = typeof item.productId === 'string' ? parseInt(item.productId, 10) : item.productId;
+          const product = productMap.get(itemProdId);
           if (product && product.type === 'GOODS' && product.trackInventory) {
             await tx.product.update({
-              where: { id: item.productId },
+              where: { id: itemProdId },
               data: {
                 stockQuantity: { decrement: item.quantity },
               },
@@ -366,7 +372,7 @@ class InvoiceService {
 
             await tx.inventoryLog.create({
               data: {
-                productId: item.productId,
+                productId: itemProdId,
                 transactionType: 'SALE',
                 quantityChange: -item.quantity,
                 previousStock: product.stockQuantity,
@@ -382,7 +388,8 @@ class InvoiceService {
 
       // Update customer balance only if customer exists
       if (customerId) {
-        await customerService.updateCustomerBalance(customerId);
+        const custId = typeof customerId === 'string' ? parseInt(customerId, 10) : customerId;
+        await customerService.updateCustomerBalance(custId);
       }
 
       return inv;
@@ -556,19 +563,23 @@ class InvoiceService {
       // Delete and recreate is simpler for full update
       await prisma.invoice.delete({ where: { id } });
 
+      const newCustomerId = data.customerId ?? existing.customerId;
       return this.createInvoice({
         organizationId,
-        customerId: data.customerId || existing.customerId,
+        customerId: newCustomerId,
         items: data.items,
         ...data,
       });
     }
 
     // Simple update without items
+    const parsedCustomerId = data.customerId !== undefined 
+      ? (typeof data.customerId === 'string' ? parseInt(data.customerId, 10) : data.customerId)
+      : undefined;
     const invoice = await prisma.invoice.update({
       where: { id },
       data: {
-        customerId: data.customerId ?? undefined,
+        customerId: parsedCustomerId ?? undefined,
         referenceNumber: data.referenceNumber,
         orderNumber: data.orderNumber,
         invoiceDate: data.invoiceDate,
@@ -643,7 +654,9 @@ class InvoiceService {
         });
       });
 
-      await customerService.updateCustomerBalance(invoice.customerId);
+      if (invoice.customerId) {
+        await customerService.updateCustomerBalance(invoice.customerId);
+      }
 
       logger.info(`Invoice voided: ${invoice.invoiceNumber}`);
       return { message: 'Invoice voided successfully' };
@@ -699,7 +712,7 @@ class InvoiceService {
       const payment = await tx.payment.create({
         data: {
           organizationId,
-          customerId: invoice.customerId,
+          customerId: invoice.customerId ?? undefined,
           invoiceId,
           paymentNumber,
           paymentDate: data.paymentDate || new Date(),
@@ -728,7 +741,9 @@ class InvoiceService {
     });
 
     // Update customer balance
-    await customerService.updateCustomerBalance(invoice.customerId);
+    if (invoice.customerId) {
+      await customerService.updateCustomerBalance(invoice.customerId);
+    }
 
     logger.info(`Payment recorded: ${result.paymentNumber} for invoice ${invoice.invoiceNumber}`);
 
