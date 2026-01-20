@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { asyncHandler } from '../middleware/error.middleware';
 import paymentService from '../services/payment.service';
@@ -6,121 +6,235 @@ import logger from '../config/logger';
 
 export class PaymentController {
   /**
-   * @route   POST /api/payments/create-intent
-   * @desc    Create payment intent for an invoice
+   * @route   POST /api/payments
+   * @desc    Create a new cash payment
    * @access  Private
    */
-  createPaymentIntent = asyncHandler(
+  createPayment = asyncHandler(
     async (req: AuthRequest, res: Response) => {
-      const { invoiceId } = req.body;
+      const organizationId = req.user!.organizationId;
 
-      logger.info(`Creating payment intent for invoice ${invoiceId}`);
+      logger.info(`Creating payment for invoice ${req.body.invoiceId} by user ${req.user?.email}`);
 
-      const paymentIntent = await paymentService.createPaymentIntent(invoiceId);
+      const payment = await paymentService.createPayment({
+        ...req.body,
+        organizationId,
+      });
 
-      res.status(200).json({
+      res.status(201).json({
         success: true,
-        data: {
-          clientSecret: paymentIntent.client_secret,
-          paymentIntentId: paymentIntent.id,
-        },
+        message: 'Payment recorded successfully',
+        data: payment,
       });
     }
   );
 
   /**
-   * @route   GET /api/payments/intent/:id
-   * @desc    Retrieve payment intent by ID
+   * @route   GET /api/payments
+   * @desc    Get all payments with filters
    * @access  Private
    */
-  getPaymentIntent = asyncHandler(
+  getAllPayments = asyncHandler(
     async (req: AuthRequest, res: Response) => {
-      const { id } = req.params;
+      const organizationId = req.user!.organizationId;
+      const {
+        dateFrom,
+        dateTo,
+        customerId,
+        invoiceId,
+        paymentMode,
+        search,
+        page,
+        limit,
+        sortBy,
+        sortOrder,
+      } = req.query;
 
-      const paymentIntent = await paymentService.retrievePaymentIntent(id);
+      const result = await paymentService.getAllPayments({
+        organizationId,
+        dateFrom: dateFrom ? new Date(dateFrom as string) : undefined,
+        dateTo: dateTo ? new Date(dateTo as string) : undefined,
+        customerId: customerId ? parseInt(customerId as string, 10) : undefined,
+        invoiceId: invoiceId ? parseInt(invoiceId as string, 10) : undefined,
+        paymentMode: paymentMode as any,
+        search: search as string,
+        page: page ? parseInt(page as string, 10) : 1,
+        limit: limit ? parseInt(limit as string, 10) : 20,
+        sortBy: sortBy as any,
+        sortOrder: sortOrder as 'asc' | 'desc',
+      });
 
       res.status(200).json({
         success: true,
-        data: paymentIntent,
+        data: result.data,
+        pagination: result.pagination,
       });
     }
   );
 
   /**
-   * @route   POST /api/payments/confirm/:id
-   * @desc    Confirm payment intent
+   * @route   GET /api/payments/:id
+   * @desc    Get payment by ID
    * @access  Private
    */
-  confirmPaymentIntent = asyncHandler(
+  getPaymentById = asyncHandler(
     async (req: AuthRequest, res: Response) => {
-      const { id } = req.params;
+      const organizationId = req.user!.organizationId;
+      const id = parseInt(req.params.id, 10);
 
-      const paymentIntent = await paymentService.confirmPaymentIntent(id);
+      const payment = await paymentService.getPaymentById(organizationId, id);
 
       res.status(200).json({
         success: true,
-        data: paymentIntent,
+        data: payment,
       });
     }
   );
 
   /**
-   * @route   POST /api/payments/webhook
-   * @desc    Handle Stripe webhook events
-   * @access  Public (with signature verification)
+   * @route   PUT /api/payments/:id
+   * @desc    Update payment
+   * @access  Private
    */
-  handleWebhook = asyncHandler(
-    async (req: Request, res: Response): Promise<void> => {
-      const signature = req.headers['stripe-signature'] as string;
+  updatePayment = asyncHandler(
+    async (req: AuthRequest, res: Response) => {
+      const organizationId = req.user!.organizationId;
+      const id = parseInt(req.params.id, 10);
 
-      if (!signature) {
-        res.status(400).json({
-          success: false,
-          message: 'Missing stripe-signature header',
-        });
-        return;
-      }
+      const payment = await paymentService.updatePayment(organizationId, id, req.body);
 
-      await paymentService.handleWebhook(req.body, signature);
-
-      res.status(200).json({ received: true });
+      res.status(200).json({
+        success: true,
+        message: 'Payment updated successfully',
+        data: payment,
+      });
     }
   );
 
   /**
-   * @route   POST /api/payments/refund
-   * @desc    Create refund for a payment
+   * @route   DELETE /api/payments/:id
+   * @desc    Delete payment
    * @access  Private (Admin only)
    */
-  createRefund = asyncHandler(
+  deletePayment = asyncHandler(
     async (req: AuthRequest, res: Response) => {
-      const { paymentIntentId, amount } = req.body;
+      const organizationId = req.user!.organizationId;
+      const id = parseInt(req.params.id, 10);
 
-      logger.info(`Creating refund for payment ${paymentIntentId}`);
-
-      const refund = await paymentService.createRefund(paymentIntentId, amount);
+      await paymentService.deletePayment(organizationId, id);
 
       res.status(200).json({
         success: true,
-        data: refund,
+        message: 'Payment deleted successfully',
       });
     }
   );
 
   /**
-   * @route   GET /api/payments/config
-   * @desc    Get Stripe publishable key
-   * @access  Public
+   * @route   POST /api/payments/bulk
+   * @desc    Record bulk payment for multiple invoices
+   * @access  Private
    */
-  getConfig = asyncHandler(
-    async (_req: Request, res: Response) => {
-      const publishableKey = paymentService.getPublishableKey();
+  recordBulkPayment = asyncHandler(
+    async (req: AuthRequest, res: Response) => {
+      const organizationId = req.user!.organizationId;
+
+      const result = await paymentService.recordBulkPayment({
+        ...req.body,
+        organizationId,
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'Bulk payment recorded successfully',
+        data: result,
+      });
+    }
+  );
+
+  /**
+   * @route   GET /api/payments/summary
+   * @desc    Get payment summary
+   * @access  Private
+   */
+  getPaymentSummary = asyncHandler(
+    async (req: AuthRequest, res: Response) => {
+      const organizationId = req.user!.organizationId;
+      const { startDate, endDate } = req.query;
+
+      const dateRange = startDate && endDate ? {
+        from: new Date(startDate as string),
+        to: new Date(endDate as string)
+      } : undefined;
+
+      const summary = await paymentService.getPaymentSummary(
+        organizationId,
+        dateRange
+      );
 
       res.status(200).json({
         success: true,
-        data: {
-          publishableKey,
-        },
+        data: summary,
+      });
+    }
+  );
+
+  /**
+   * @route   GET /api/payments/recent
+   * @desc    Get recent payments
+   * @access  Private
+   */
+  getRecentPayments = asyncHandler(
+    async (req: AuthRequest, res: Response) => {
+      const organizationId = req.user!.organizationId;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 10;
+
+      const payments = await paymentService.getRecentPayments(organizationId, limit);
+
+      res.status(200).json({
+        success: true,
+        count: payments.length,
+        data: payments,
+      });
+    }
+  );
+
+  /**
+   * @route   GET /api/payments/customer/:id
+   * @desc    Get customer payments
+   * @access  Private
+   */
+  getCustomerPayments = asyncHandler(
+    async (req: AuthRequest, res: Response) => {
+      const organizationId = req.user!.organizationId;
+      const customerId = parseInt(req.params.id, 10);
+
+      const payments = await paymentService.getCustomerPayments(organizationId, customerId);
+
+      res.status(200).json({
+        success: true,
+        count: payments.length,
+        data: payments,
+      });
+    }
+  );
+
+  /**
+   * @route   GET /api/payments/customer/:id/unpaid-invoices
+   * @desc    Get unpaid invoices for a customer
+   * @access  Private
+   */
+  getUnpaidInvoices = asyncHandler(
+    async (req: AuthRequest, res: Response) => {
+      const organizationId = req.user!.organizationId;
+      const customerId = parseInt(req.params.id, 10);
+
+      const invoices = await paymentService.getUnpaidInvoices(organizationId, customerId);
+
+      res.status(200).json({
+        success: true,
+        count: invoices.length,
+        data: invoices,
       });
     }
   );

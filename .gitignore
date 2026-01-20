@@ -18,6 +18,10 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+nul
 
 # Prisma
 prisma/migrations/
+
+# Frontend (separate repo)
+frontend/

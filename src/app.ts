@@ -9,10 +9,16 @@ import { errorHandler, notFoundHandler } from './middleware/error.middleware';
 
 // Import routes
 import authRoutes from './routes/auth.routes';
+import organizationRoutes from './routes/organization.routes';
 import customerRoutes from './routes/customer.routes';
 import productRoutes from './routes/product.routes';
 import invoiceRoutes from './routes/invoice.routes';
+import estimateRoutes from './routes/estimate.routes';
+import creditNoteRoutes from './routes/creditNote.routes';
 import paymentRoutes from './routes/payment.routes';
+import expenseRoutes from './routes/expense.routes';
+import reportRoutes from './routes/report.routes';
+import stripeRoutes from './routes/stripe.routes';
 
 // ============================================
 // EXPRESS APP SETUP
@@ -96,11 +102,26 @@ app.get('/health', (_req: Request, res: Response) => {
 // ============================================
 const API_PREFIX = '/api';
 
+// Auth & Organization
 app.use(`${API_PREFIX}/auth`, authRoutes);
+app.use(`${API_PREFIX}/organizations`, organizationRoutes);
+
+// Master Data
 app.use(`${API_PREFIX}/customers`, customerRoutes);
 app.use(`${API_PREFIX}/products`, productRoutes);
+
+// Transactions
 app.use(`${API_PREFIX}/invoices`, invoiceRoutes);
+app.use(`${API_PREFIX}/estimates`, estimateRoutes);
+app.use(`${API_PREFIX}/credit-notes`, creditNoteRoutes);
 app.use(`${API_PREFIX}/payments`, paymentRoutes);
+app.use(`${API_PREFIX}/expenses`, expenseRoutes);
+
+// Stripe Payments (UPI, Card)
+app.use(`${API_PREFIX}/stripe`, stripeRoutes);
+
+// Reports & Dashboard
+app.use(`${API_PREFIX}/reports`, reportRoutes);
 
 // ============================================
 // ROOT ENDPOINT
@@ -108,9 +129,20 @@ app.use(`${API_PREFIX}/payments`, paymentRoutes);
 app.get('/', (_req: Request, res: Response) => {
   res.status(200).json({
     success: true,
-    message: 'Inventory & Billing API - PERN Stack',
-    version: '1.0.0',
+    message: 'SaaS Invoice Management API',
+    version: '2.0.0',
+    features: [
+      'Multi-tenant organization support',
+      'Full GST compliance (CGST/SGST/IGST)',
+      'Invoice, Estimate, Credit Note management',
+      'Cash payment tracking',
+      'Expense tracking with categories',
+      'Comprehensive reports & dashboard',
+      'Product inventory management',
+      'Customer management with groups',
+    ],
     documentation: '/api',
+    payment: 'Cash only (UPI/Card coming soon)',
   });
 });
 

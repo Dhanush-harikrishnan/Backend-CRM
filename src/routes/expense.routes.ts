@@ -1,8 +1,8 @@
 import { Router, Response, NextFunction } from 'express';
-import paymentService from '../services/payment.service';
+import expenseService from '../services/expense.service';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validation.middleware';
-import { createPaymentSchema, updatePaymentSchema, paymentListQuerySchema, bulkPaymentSchema } from '../validators';
+import { createExpenseSchema, updateExpenseSchema, expenseListQuerySchema, createExpenseCategorySchema } from '../validators';
 import { AppError } from '../middleware/error.middleware';
 
 const router = Router();
@@ -11,27 +11,26 @@ const router = Router();
 router.use(authenticate);
 
 /**
- * @route   POST /api/payments
- * @desc    Create new payment
+ * @route   POST /api/expenses
+ * @desc    Create new expense
  * @access  Private
  */
 router.post(
   '/',
-  validate(createPaymentSchema),
+  validate(createExpenseSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       if (!req.user?.organizationId) {
         throw new AppError('Organization not found', 404);
       }
-      const payment = await paymentService.createPayment({
+      const expense = await expenseService.createExpense({
         organizationId: req.user.organizationId,
         ...req.body,
-        paymentDate: req.body.paymentDate ? new Date(req.body.paymentDate) : undefined,
       });
       res.status(201).json({
         success: true,
-        message: 'Payment recorded successfully',
-        data: payment,
+        message: 'Expense recorded successfully',
+        data: expense,
       });
     } catch (error) {
       next(error);
@@ -40,52 +39,22 @@ router.post(
 );
 
 /**
- * @route   POST /api/payments/bulk
- * @desc    Record bulk payment (apply to multiple invoices)
- * @access  Private
- */
-router.post(
-  '/bulk',
-  validate(bulkPaymentSchema),
-  async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      if (!req.user?.organizationId) {
-        throw new AppError('Organization not found', 404);
-      }
-      const payment = await paymentService.recordBulkPayment({
-        organizationId: req.user.organizationId,
-        ...req.body,
-        paymentDate: req.body.paymentDate ? new Date(req.body.paymentDate) : undefined,
-      });
-      res.status(201).json({
-        success: true,
-        message: 'Bulk payment recorded successfully',
-        data: payment,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-);
-
-/**
- * @route   GET /api/payments
- * @desc    Get all payments with filters
+ * @route   GET /api/expenses
+ * @desc    Get all expenses with filters
  * @access  Private
  */
 router.get(
   '/',
-  validate(paymentListQuerySchema),
+  validate(expenseListQuerySchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       if (!req.user?.organizationId) {
         throw new AppError('Organization not found', 404);
       }
-      const result = await paymentService.getAllPayments({
+      const result = await expenseService.getAllExpenses({
         organizationId: req.user.organizationId,
-        customerId: req.query.customerId ? Number(req.query.customerId) : undefined,
-        invoiceId: req.query.invoiceId ? Number(req.query.invoiceId) : undefined,
-        paymentMode: req.query.paymentMode as any,
+        categoryId: req.query.categoryId ? Number(req.query.categoryId) : undefined,
+        vendorName: req.query.vendorName as string,
         dateFrom: req.query.dateFrom ? new Date(req.query.dateFrom as string) : undefined,
         dateTo: req.query.dateTo ? new Date(req.query.dateTo as string) : undefined,
         search: req.query.search as string,
@@ -102,8 +71,8 @@ router.get(
 );
 
 /**
- * @route   GET /api/payments/summary
- * @desc    Get payment summary
+ * @route   GET /api/expenses/summary
+ * @desc    Get expense summary
  * @access  Private
  */
 router.get(
@@ -113,10 +82,10 @@ router.get(
       if (!req.user?.organizationId) {
         throw new AppError('Organization not found', 404);
       }
-      const dateRange = req.query.from && req.query.to
+      const dateRange = req.query.from && req.query.to 
         ? { from: new Date(req.query.from as string), to: new Date(req.query.to as string) }
         : undefined;
-      const summary = await paymentService.getPaymentSummary(req.user.organizationId, dateRange);
+      const summary = await expenseService.getExpenseSummary(req.user.organizationId, dateRange);
       res.json({ success: true, data: summary });
     } catch (error) {
       next(error);
@@ -125,8 +94,8 @@ router.get(
 );
 
 /**
- * @route   GET /api/payments/recent
- * @desc    Get recent payments
+ * @route   GET /api/expenses/recent
+ * @desc    Get recent expenses
  * @access  Private
  */
 router.get(
@@ -137,8 +106,8 @@ router.get(
         throw new AppError('Organization not found', 404);
       }
       const limit = req.query.limit ? Number(req.query.limit) : 10;
-      const payments = await paymentService.getRecentPayments(req.user.organizationId, limit);
-      res.json({ success: true, data: payments });
+      const expenses = await expenseService.getRecentExpenses(req.user.organizationId, limit);
+      res.json({ success: true, data: expenses });
     } catch (error) {
       next(error);
     }
@@ -146,22 +115,19 @@ router.get(
 );
 
 /**
- * @route   GET /api/payments/customer/:customerId/unpaid-invoices
- * @desc    Get unpaid invoices for a customer
+ * @route   GET /api/expenses/categories
+ * @desc    Get all expense categories
  * @access  Private
  */
 router.get(
-  '/customer/:customerId/unpaid-invoices',
+  '/categories',
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       if (!req.user?.organizationId) {
         throw new AppError('Organization not found', 404);
       }
-      const invoices = await paymentService.getUnpaidInvoices(
-        req.user.organizationId,
-        Number(req.params.customerId)
-      );
-      res.json({ success: true, data: invoices });
+      const categories = await expenseService.getCategories(req.user.organizationId);
+      res.json({ success: true, data: categories });
     } catch (error) {
       next(error);
     }
@@ -169,22 +135,23 @@ router.get(
 );
 
 /**
- * @route   GET /api/payments/customer/:customerId
- * @desc    Get customer payments
+ * @route   POST /api/expenses/categories
+ * @desc    Create expense category
  * @access  Private
  */
-router.get(
-  '/customer/:customerId',
+router.post(
+  '/categories',
+  validate(createExpenseCategorySchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       if (!req.user?.organizationId) {
         throw new AppError('Organization not found', 404);
       }
-      const payments = await paymentService.getCustomerPayments(
+      const category = await expenseService.createCategory(
         req.user.organizationId,
-        Number(req.params.customerId)
+        req.body
       );
-      res.json({ success: true, data: payments });
+      res.status(201).json({ success: true, data: category });
     } catch (error) {
       next(error);
     }
@@ -192,8 +159,32 @@ router.get(
 );
 
 /**
- * @route   GET /api/payments/:id
- * @desc    Get payment by ID
+ * @route   PUT /api/expenses/categories/:id
+ * @desc    Update expense category
+ * @access  Private
+ */
+router.put(
+  '/categories/:id',
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!req.user?.organizationId) {
+        throw new AppError('Organization not found', 404);
+      }
+      const category = await expenseService.updateCategory(
+        req.user.organizationId,
+        Number(req.params.id),
+        req.body
+      );
+      res.json({ success: true, data: category });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * @route   GET /api/expenses/:id
+ * @desc    Get expense by ID
  * @access  Private
  */
 router.get(
@@ -203,11 +194,11 @@ router.get(
       if (!req.user?.organizationId) {
         throw new AppError('Organization not found', 404);
       }
-      const payment = await paymentService.getPaymentById(
+      const expense = await expenseService.getExpenseById(
         req.user.organizationId,
         Number(req.params.id)
       );
-      res.json({ success: true, data: payment });
+      res.json({ success: true, data: expense });
     } catch (error) {
       next(error);
     }
@@ -215,28 +206,24 @@ router.get(
 );
 
 /**
- * @route   PUT /api/payments/:id
- * @desc    Update payment (limited fields)
+ * @route   PUT /api/expenses/:id
+ * @desc    Update expense
  * @access  Private
  */
 router.put(
   '/:id',
-  validate(updatePaymentSchema),
+  validate(updateExpenseSchema),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       if (!req.user?.organizationId) {
         throw new AppError('Organization not found', 404);
       }
-      const payment = await paymentService.updatePayment(
+      const expense = await expenseService.updateExpense(
         req.user.organizationId,
         Number(req.params.id),
-        {
-          paymentDate: req.body.paymentDate ? new Date(req.body.paymentDate) : undefined,
-          referenceNumber: req.body.referenceNumber,
-          notes: req.body.notes,
-        }
+        req.body
       );
-      res.json({ success: true, data: payment });
+      res.json({ success: true, data: expense });
     } catch (error) {
       next(error);
     }
@@ -244,8 +231,8 @@ router.put(
 );
 
 /**
- * @route   DELETE /api/payments/:id
- * @desc    Delete payment
+ * @route   DELETE /api/expenses/:id
+ * @desc    Delete expense
  * @access  Private
  */
 router.delete(
@@ -255,7 +242,7 @@ router.delete(
       if (!req.user?.organizationId) {
         throw new AppError('Organization not found', 404);
       }
-      const result = await paymentService.deletePayment(
+      const result = await expenseService.deleteExpense(
         req.user.organizationId,
         Number(req.params.id)
       );

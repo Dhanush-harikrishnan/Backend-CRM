@@ -1,179 +1,535 @@
-import Stripe from 'stripe';
-import config from '../config';
+import prisma from '../config/database';
 import { AppError } from '../middleware/error.middleware';
 import logger from '../config/logger';
-import invoiceService from './invoice.service';
+import organizationService from './organization.service';
+import customerService from './customer.service';
+
+export interface CreatePaymentInput {
+  organizationId: string;
+  customerId: number;
+  invoiceId?: number;
+  amount: number;
+  paymentDate?: Date;
+  paymentMode?: 'CASH' | 'UPI' | 'CARD' | 'NETBANKING' | 'CHEQUE' | 'BANK_TRANSFER';
+  bankAccountId?: number;
+  referenceNumber?: string;
+  notes?: string;
+}
+
+export interface UpdatePaymentInput {
+  paymentDate?: Date;
+  referenceNumber?: string;
+  notes?: string;
+}
+
+export interface PaymentListFilters {
+  organizationId: string;
+  customerId?: number;
+  invoiceId?: number;
+  paymentMode?: string;
+  dateFrom?: Date;
+  dateTo?: Date;
+  search?: string;
+  page?: number;
+  limit?: number;
+  sortBy?: 'paymentDate' | 'amount' | 'createdAt';
+  sortOrder?: 'asc' | 'desc';
+}
+
+export interface ApplyPaymentInput {
+  organizationId: string;
+  paymentId: number;
+  applications: Array<{
+    invoiceId: number;
+    amount: number;
+  }>;
+}
 
 class PaymentService {
-  private stripe: Stripe;
-
-  constructor() {
-    if (!config.stripe.secretKey) {
-      throw new Error('STRIPE_SECRET_KEY is required');
-    }
-    
-    // Validate Stripe key format
-    if (!config.stripe.secretKey.startsWith('sk_')) {
-      throw new Error('Invalid STRIPE_SECRET_KEY format. Must start with sk_test_ or sk_live_');
-    }
-    
-    // Remove any whitespace or quotes that might have been accidentally included
-    const cleanKey = config.stripe.secretKey.trim().replace(/[\"']/g, '');
-    
-    this.stripe = new Stripe(cleanKey, {
-      apiVersion: '2025-12-15.clover',
-    });
-    
-    logger.info(`Stripe initialized with key: ${cleanKey.substring(0, 12)}...${cleanKey.slice(-4)}`);
-  }
-
   /**
-   * Create a payment intent for an invoice
+   * Create payment received
    */
-  async createPaymentIntent(invoiceId: number): Promise<Stripe.PaymentIntent> {
-    try {
-      // Fetch invoice details
-      const invoice = await invoiceService.getInvoiceById(invoiceId);
+  async createPayment(data: CreatePaymentInput) {
+    const { organizationId, customerId, invoiceId, amount, ...paymentData } = data;
+
+    // Validate customer
+    const customer = await prisma.customer.findFirst({
+      where: { id: customerId, organizationId },
+    });
+
+    if (!customer) {
+      throw new AppError('Customer not found', 404);
+    }
+
+    // Validate invoice if provided
+    if (invoiceId) {
+      const invoice = await prisma.invoice.findFirst({
+        where: { id: invoiceId, organizationId, customerId },
+      });
 
       if (!invoice) {
         throw new AppError('Invoice not found', 404);
       }
 
-      if (invoice.paymentStatus === 'PAID') {
-        throw new AppError('Invoice is already paid', 400);
+      if (invoice.status === 'VOID') {
+        throw new AppError('Cannot record payment for voided invoice', 400);
       }
 
-      // Amount should be in smallest currency unit (paise for INR)
-      const amount = Math.round(Number(invoice.totalAmount) * 100);
+      if (invoice.paymentStatus === 'PAID') {
+        throw new AppError('Invoice is already fully paid', 400);
+      }
 
-      // Create payment intent
-      const paymentIntent = await this.stripe.paymentIntents.create({
-        amount,
-        currency: 'inr',
-        metadata: {
-          invoiceId: invoice.id.toString(),
-          invoiceNumber: invoice.invoiceNumber,
-          customerId: invoice.customerId.toString(),
+      const balanceDue = Number(invoice.balanceDue);
+      if (amount > balanceDue) {
+        throw new AppError(`Payment amount exceeds invoice balance (₹${balanceDue})`, 400);
+      }
+    }
+
+    if (amount <= 0) {
+      throw new AppError('Payment amount must be positive', 400);
+    }
+
+    // Generate payment number
+    const paymentNumber = await organizationService.getNextSequenceNumber(organizationId, 'payment');
+
+    const payment = await prisma.$transaction(async (tx) => {
+      // Create payment record
+      const pmt = await tx.payment.create({
+        data: {
+          organizationId,
+          customerId,
+          invoiceId,
+          paymentNumber,
+          paymentDate: paymentData.paymentDate || new Date(),
+          amount,
+          paymentMode: 'CASH', // Only CASH for now
+          bankAccountId: paymentData.bankAccountId,
+          referenceNumber: paymentData.referenceNumber,
+          notes: paymentData.notes,
         },
-        description: `Payment for Invoice ${invoice.invoiceNumber}`,
+        include: {
+          customer: {
+            select: { id: true, displayName: true },
+          },
+          invoice: {
+            select: { id: true, invoiceNumber: true },
+          },
+        },
       });
 
-      logger.info(`Payment intent created: ${paymentIntent.id} for invoice ${invoice.invoiceNumber}`);
-
-      return paymentIntent;
-    } catch (error) {
-      logger.error('Error creating payment intent:', error);
-      if (error instanceof AppError) {
-        throw error;
-      }
-      throw new AppError('Failed to create payment intent', 500);
-    }
-  }
-
-  /**
-   * Retrieve payment intent by ID
-   */
-  async retrievePaymentIntent(paymentIntentId: string): Promise<Stripe.PaymentIntent> {
-    try {
-      const paymentIntent = await this.stripe.paymentIntents.retrieve(paymentIntentId);
-      return paymentIntent;
-    } catch (error) {
-      logger.error('Error retrieving payment intent:', error);
-      throw new AppError('Failed to retrieve payment intent', 500);
-    }
-  }
-
-  /**
-   * Confirm payment intent
-   */
-  async confirmPaymentIntent(paymentIntentId: string): Promise<Stripe.PaymentIntent> {
-    try {
-      const paymentIntent = await this.stripe.paymentIntents.confirm(paymentIntentId);
-      logger.info(`Payment intent confirmed: ${paymentIntentId}`);
-      return paymentIntent;
-    } catch (error) {
-      logger.error('Error confirming payment intent:', error);
-      throw new AppError('Failed to confirm payment intent', 500);
-    }
-  }
-
-  /**
-   * Handle Stripe webhook events
-   */
-  async handleWebhook(payload: string | Buffer, signature: string): Promise<void> {
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
-    if (!webhookSecret) {
-      throw new AppError('Webhook secret not configured', 500);
-    }
-
-    try {
-      // Verify webhook signature
-      const event = this.stripe.webhooks.constructEvent(payload, signature, webhookSecret);
-
-      logger.info(`Webhook received: ${event.type}`);
-
-      // Handle different event types
-      switch (event.type) {
-        case 'payment_intent.succeeded': {
-          const paymentIntent = event.data.object as Stripe.PaymentIntent;
-          const invoiceId = paymentIntent.metadata.invoiceId;
-
-          if (invoiceId) {
-            // Update invoice payment status
-            logger.info(`Payment succeeded for invoice ${invoiceId}`);
-            // TODO: Add method to update invoice payment status
-          }
-          break;
+      // Update invoice if linked
+      if (invoiceId) {
+        const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
+        if (invoice) {
+          const newBalanceDue = Number(invoice.balanceDue) - amount;
+          const paymentStatus = newBalanceDue <= 0 ? 'PAID' : 'PARTIALLY_PAID';
+          
+          await tx.invoice.update({
+            where: { id: invoiceId },
+            data: {
+              balanceDue: Math.max(0, newBalanceDue),
+              paymentStatus,
+              status: invoice.status === 'DRAFT' ? 'SENT' : invoice.status,
+            },
+          });
         }
+      }
 
-        case 'payment_intent.payment_failed': {
-          const paymentIntent = event.data.object as Stripe.PaymentIntent;
-          const invoiceId = paymentIntent.metadata.invoiceId;
+      return pmt;
+    });
 
-          if (invoiceId) {
-            logger.error(`Payment failed for invoice ${invoiceId}`);
-          }
-          break;
+    // Update customer balance
+    await customerService.updateCustomerBalance(customerId);
+
+    logger.info(`Payment created: ${payment.paymentNumber}`);
+    return payment;
+  }
+
+  /**
+   * Get all payments with filtering
+   */
+  async getAllPayments(filters: PaymentListFilters) {
+    const {
+      organizationId,
+      customerId,
+      invoiceId,
+      paymentMode,
+      dateFrom,
+      dateTo,
+      search,
+      page = 1,
+      limit = 20,
+      sortBy = 'paymentDate',
+      sortOrder = 'desc',
+    } = filters;
+
+    const where: any = { organizationId };
+
+    if (customerId) where.customerId = customerId;
+    if (invoiceId) where.invoiceId = invoiceId;
+    if (paymentMode) where.paymentMode = paymentMode;
+
+    if (dateFrom || dateTo) {
+      where.paymentDate = {};
+      if (dateFrom) where.paymentDate.gte = dateFrom;
+      if (dateTo) where.paymentDate.lte = dateTo;
+    }
+
+    if (search) {
+      where.OR = [
+        { paymentNumber: { contains: search, mode: 'insensitive' } },
+        { referenceNumber: { contains: search, mode: 'insensitive' } },
+        { customer: { displayName: { contains: search, mode: 'insensitive' } } },
+        { invoice: { invoiceNumber: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [payments, total] = await Promise.all([
+      prisma.payment.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { [sortBy]: sortOrder },
+        include: {
+          customer: {
+            select: { id: true, displayName: true, email: true },
+          },
+          invoice: {
+            select: { id: true, invoiceNumber: true, totalAmount: true },
+          },
+        },
+      }),
+      prisma.payment.count({ where }),
+    ]);
+
+    return {
+      data: payments,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Get payment by ID
+   */
+  async getPaymentById(organizationId: string, id: number) {
+    const payment = await prisma.payment.findFirst({
+      where: { id, organizationId },
+      include: {
+        customer: true,
+        invoice: true,
+        bankAccount: true,
+      },
+    });
+
+    if (!payment) {
+      throw new AppError('Payment not found', 404);
+    }
+
+    return payment;
+  }
+
+  /**
+   * Update payment (limited fields)
+   */
+  async updatePayment(organizationId: string, id: number, data: UpdatePaymentInput) {
+    const payment = await prisma.payment.findFirst({
+      where: { id, organizationId },
+    });
+
+    if (!payment) {
+      throw new AppError('Payment not found', 404);
+    }
+
+    // Only allow updating certain fields
+    return prisma.payment.update({
+      where: { id },
+      data: {
+        paymentDate: data.paymentDate,
+        referenceNumber: data.referenceNumber,
+        notes: data.notes,
+      },
+      include: {
+        customer: {
+          select: { id: true, displayName: true },
+        },
+        invoice: {
+          select: { id: true, invoiceNumber: true },
+        },
+      },
+    });
+  }
+
+  /**
+   * Delete payment
+   */
+  async deletePayment(organizationId: string, id: number) {
+    const payment = await prisma.payment.findFirst({
+      where: { id, organizationId },
+    });
+
+    if (!payment) {
+      throw new AppError('Payment not found', 404);
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // If linked to invoice, restore balance
+      if (payment.invoiceId) {
+        const invoice = await tx.invoice.findUnique({
+          where: { id: payment.invoiceId },
+        });
+
+        if (invoice && invoice.status !== 'VOID') {
+          const newBalanceDue = Number(invoice.balanceDue) + Number(payment.amount);
+          const paymentStatus = newBalanceDue >= Number(invoice.totalAmount) ? 'UNPAID' : 'PARTIALLY_PAID';
+
+          await tx.invoice.update({
+            where: { id: payment.invoiceId },
+            data: {
+              balanceDue: newBalanceDue,
+              paymentStatus,
+            },
+          });
         }
-
-        default:
-          logger.info(`Unhandled event type: ${event.type}`);
       }
-    } catch (error) {
-      logger.error('Webhook error:', error);
-      throw new AppError('Webhook verification failed', 400);
-    }
+
+      await tx.payment.delete({ where: { id } });
+    });
+
+    // Update customer balance
+    await customerService.updateCustomerBalance(payment.customerId);
+
+    logger.info(`Payment deleted: ${payment.paymentNumber}`);
+    return { message: 'Payment deleted successfully' };
   }
 
   /**
-   * Create refund for a payment
+   * Get unpaid/partially paid invoices for a customer
    */
-  async createRefund(paymentIntentId: string, amount?: number): Promise<Stripe.Refund> {
-    try {
-      const refundData: Stripe.RefundCreateParams = {
-        payment_intent: paymentIntentId,
-      };
-
-      if (amount) {
-        refundData.amount = Math.round(amount * 100); // Convert to paise
-      }
-
-      const refund = await this.stripe.refunds.create(refundData);
-      logger.info(`Refund created: ${refund.id} for payment ${paymentIntentId}`);
-
-      return refund;
-    } catch (error) {
-      logger.error('Error creating refund:', error);
-      throw new AppError('Failed to create refund', 500);
-    }
+  async getUnpaidInvoices(organizationId: string, customerId: number) {
+    return prisma.invoice.findMany({
+      where: {
+        organizationId,
+        customerId,
+        paymentStatus: { in: ['UNPAID', 'PARTIALLY_PAID'] },
+        status: { notIn: ['VOID', 'DRAFT'] },
+      },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        invoiceDate: true,
+        dueDate: true,
+        totalAmount: true,
+        balanceDue: true,
+      },
+      orderBy: { dueDate: 'asc' },
+    });
   }
 
   /**
-   * Get publishable key for frontend
+   * Record bulk payment (apply to multiple invoices)
    */
-  getPublishableKey(): string {
-    return config.stripe.publishableKey;
+  async recordBulkPayment(data: {
+    organizationId: string;
+    customerId: number;
+    totalAmount: number;
+    paymentDate?: Date;
+    referenceNumber?: string;
+    notes?: string;
+    invoiceAllocations: Array<{ invoiceId: number; amount: number }>;
+  }) {
+    const { organizationId, customerId, totalAmount, invoiceAllocations, ...paymentData } = data;
+
+    // Validate customer
+    const customer = await prisma.customer.findFirst({
+      where: { id: customerId, organizationId },
+    });
+
+    if (!customer) {
+      throw new AppError('Customer not found', 404);
+    }
+
+    // Validate total matches allocations
+    const allocatedTotal = invoiceAllocations.reduce((sum, a) => sum + a.amount, 0);
+    if (Math.abs(allocatedTotal - totalAmount) > 0.01) {
+      throw new AppError('Total amount does not match invoice allocations', 400);
+    }
+
+    // Validate all invoices
+    const invoiceIds = invoiceAllocations.map(a => a.invoiceId);
+    const invoices = await prisma.invoice.findMany({
+      where: {
+        id: { in: invoiceIds },
+        organizationId,
+        customerId,
+        status: { notIn: ['VOID'] },
+      },
+    });
+
+    if (invoices.length !== invoiceIds.length) {
+      throw new AppError('One or more invoices not found', 404);
+    }
+
+    // Validate amounts don't exceed balance
+    for (const allocation of invoiceAllocations) {
+      const invoice = invoices.find(i => i.id === allocation.invoiceId);
+      if (!invoice) continue;
+      if (allocation.amount > Number(invoice.balanceDue)) {
+        throw new AppError(`Amount exceeds balance for invoice ${invoice.invoiceNumber}`, 400);
+      }
+    }
+
+    // Generate payment number
+    const paymentNumber = await organizationService.getNextSequenceNumber(organizationId, 'payment');
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Create one master payment record (without specific invoice link)
+      const payment = await tx.payment.create({
+        data: {
+          organizationId,
+          customerId,
+          paymentNumber,
+          paymentDate: paymentData.paymentDate || new Date(),
+          amount: totalAmount,
+          paymentMode: 'CASH',
+          referenceNumber: paymentData.referenceNumber,
+          notes: paymentData.notes || `Applied to invoices: ${invoices.map(i => i.invoiceNumber).join(', ')}`,
+        },
+      });
+
+      // Update each invoice
+      for (const allocation of invoiceAllocations) {
+        const invoice = invoices.find(i => i.id === allocation.invoiceId)!;
+        const newBalanceDue = Number(invoice.balanceDue) - allocation.amount;
+        const paymentStatus = newBalanceDue <= 0 ? 'PAID' : 'PARTIALLY_PAID';
+
+        // Create linked payment record for tracking
+        const individualPaymentNumber = await organizationService.getNextSequenceNumber(organizationId, 'payment');
+        await tx.payment.create({
+          data: {
+            organizationId,
+            customerId,
+            invoiceId: allocation.invoiceId,
+            paymentNumber: individualPaymentNumber,
+            paymentDate: paymentData.paymentDate || new Date(),
+            amount: allocation.amount,
+            paymentMode: 'CASH',
+            referenceNumber: `Ref: ${payment.paymentNumber}`,
+            notes: `Part of bulk payment ${payment.paymentNumber}`,
+          },
+        });
+
+        await tx.invoice.update({
+          where: { id: allocation.invoiceId },
+          data: {
+            balanceDue: Math.max(0, newBalanceDue),
+            paymentStatus,
+          },
+        });
+      }
+
+      return payment;
+    });
+
+    // Update customer balance
+    await customerService.updateCustomerBalance(customerId);
+
+    logger.info(`Bulk payment recorded: ${result.paymentNumber}`);
+    return result;
+  }
+
+  /**
+   * Get payment summary
+   */
+  async getPaymentSummary(organizationId: string, dateRange?: { from: Date; to: Date }) {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+    const from = dateRange?.from || startOfMonth;
+    const to = dateRange?.to || endOfMonth;
+
+    const [totalReceived, byMode, recentPayments] = await Promise.all([
+      prisma.payment.aggregate({
+        where: {
+          organizationId,
+          paymentDate: { gte: from, lte: to },
+        },
+        _sum: { amount: true },
+        _count: true,
+      }),
+      prisma.payment.groupBy({
+        by: ['paymentMode'],
+        where: {
+          organizationId,
+          paymentDate: { gte: from, lte: to },
+        },
+        _sum: { amount: true },
+        _count: true,
+      }),
+      prisma.payment.findMany({
+        where: { organizationId },
+        take: 5,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          customer: {
+            select: { displayName: true },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      period: { from, to },
+      totalReceived: Number(totalReceived._sum.amount || 0),
+      paymentCount: totalReceived._count,
+      byMode: byMode.map(item => ({
+        mode: item.paymentMode,
+        amount: Number(item._sum.amount || 0),
+        count: item._count,
+      })),
+      recentPayments,
+    };
+  }
+
+  /**
+   * Get customer payments
+   */
+  async getCustomerPayments(organizationId: string, customerId: number) {
+    return prisma.payment.findMany({
+      where: { organizationId, customerId },
+      orderBy: { paymentDate: 'desc' },
+      include: {
+        invoice: {
+          select: { id: true, invoiceNumber: true },
+        },
+      },
+    });
+  }
+
+  /**
+   * Get recent payments
+   */
+  async getRecentPayments(organizationId: string, limit: number = 10) {
+    return prisma.payment.findMany({
+      where: { organizationId },
+      take: limit,
+      orderBy: { paymentDate: 'desc' },
+      include: {
+        customer: {
+          select: { id: true, displayName: true },
+        },
+        invoice: {
+          select: { id: true, invoiceNumber: true },
+        },
+      },
+    });
   }
 }
 

@@ -1,4 +1,5 @@
 // This is your Prisma schema file
+// Zoho Invoice-like SaaS Invoice Management System
 // Learn more: https://pris.ly/d/prisma-schema
 
 generator client {
@@ -11,131 +12,571 @@ datasource db {
 }
 
 // ============================================
-// USER MODEL - Shop Owner/Admin Authentication
+// ORGANIZATION MODEL - Multi-tenant SaaS
+// ============================================
+model Organization {
+  id                  String   @id @default(cuid())
+  name                String
+  slug                String   @unique // URL-friendly identifier
+  email               String
+  phone               String?
+  website             String?
+  
+  // Business Details
+  businessType        BusinessType @default(BUSINESS) @map("business_type")
+  industryType        String?      @map("industry_type")
+  registrationNumber  String?      @map("registration_number")
+  
+  // Tax Information
+  gstNumber           String?      @map("gst_number") @db.VarChar(15)
+  panNumber           String?      @map("pan_number") @db.VarChar(10)
+  taxRegistered       Boolean      @default(false) @map("tax_registered")
+  
+  // Address
+  addressLine1        String?      @map("address_line_1")
+  addressLine2        String?      @map("address_line_2")
+  city                String?
+  state               String?
+  postalCode          String?      @map("postal_code")
+  country             String       @default("India")
+  
+  // Branding
+  logo                String?      @db.Text
+  brandColor          String?      @map("brand_color") @db.VarChar(7)
+  
+  // Settings
+  currencyCode        String       @default("INR") @map("currency_code") @db.VarChar(3)
+  currencySymbol      String       @default("₹") @map("currency_symbol") @db.VarChar(5)
+  dateFormat          String       @default("DD/MM/YYYY") @map("date_format")
+  financialYearStart  Int          @default(4) @map("financial_year_start") // April = 4
+  
+  // Invoice Settings
+  invoicePrefix       String       @default("INV") @map("invoice_prefix") @db.VarChar(10)
+  invoiceStartNumber  Int          @default(1) @map("invoice_start_number")
+  estimatePrefix      String       @default("EST") @map("estimate_prefix") @db.VarChar(10)
+  estimateStartNumber Int          @default(1) @map("estimate_start_number")
+  creditNotePrefix    String       @default("CN") @map("credit_note_prefix") @db.VarChar(10)
+  creditNoteStartNumber Int        @default(1) @map("credit_note_start_number")
+  paymentPrefix       String       @default("PAY") @map("payment_prefix") @db.VarChar(10)
+  paymentStartNumber  Int          @default(1) @map("payment_start_number")
+  
+  // Default Terms
+  defaultPaymentTerms Int          @default(30) @map("default_payment_terms") // Days
+  defaultInvoiceNotes String?      @map("default_invoice_notes") @db.Text
+  defaultTermsConditions String?   @map("default_terms_conditions") @db.Text
+  
+  // Subscription
+  plan                SubscriptionPlan @default(FREE)
+  planExpiresAt       DateTime?    @map("plan_expires_at")
+  
+  isActive            Boolean      @default(true) @map("is_active")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+  
+  // Relations
+  users               User[]
+  customers           Customer[]
+  customerGroups      CustomerGroup[]
+  products            Product[]
+  productCategories   ProductCategory[]
+  invoices            Invoice[]
+  estimates           Estimate[]
+  creditNotes         CreditNote[]
+  payments            Payment[]
+  expenses            Expense[]
+  expenseCategories   ExpenseCategory[]
+  taxes               Tax[]
+  bankAccounts        BankAccount[]
+  activityLogs        ActivityLog[]
+  recurringInvoices   RecurringInvoice[]
+  invoiceTemplates    InvoiceTemplate[]
+  stripePayments      StripePayment[]
+
+  @@index([slug])
+  @@index([isActive])
+  @@map("organizations")
+}
+
+enum BusinessType {
+  INDIVIDUAL
+  BUSINESS
+  PARTNERSHIP
+  LLP
+  PRIVATE_LIMITED
+  PUBLIC_LIMITED
+  TRUST
+  SOCIETY
+  OTHER
+}
+
+enum SubscriptionPlan {
+  FREE
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+// ============================================
+// USER MODEL - Organization Members
 // ============================================
 model User {
-  id            String   @id @default(cuid())
-  email         String   @unique
-  password_hash String
-  name          String
-  role          UserRole @default(ADMIN)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
+  id              String   @id @default(cuid())
+  organizationId  String   @map("organization_id")
+  email           String   
+  passwordHash    String   @map("password_hash")
+  name            String
+  phone           String?
+  avatar          String?  @db.Text
+  role            UserRole @default(STAFF)
+  
+  // Permissions
+  canCreateInvoice    Boolean @default(true) @map("can_create_invoice")
+  canEditInvoice      Boolean @default(true) @map("can_edit_invoice")
+  canDeleteInvoice    Boolean @default(false) @map("can_delete_invoice")
+  canViewReports      Boolean @default(false) @map("can_view_reports")
+  canManageCustomers  Boolean @default(true) @map("can_manage_customers")
+  canManageProducts   Boolean @default(true) @map("can_manage_products")
+  canManageSettings   Boolean @default(false) @map("can_manage_settings")
+  
+  isActive        Boolean  @default(true) @map("is_active")
+  lastLoginAt     DateTime? @map("last_login_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  activityLogs    ActivityLog[]
+  
+  @@unique([organizationId, email])
+  @@index([organizationId])
+  @@index([email])
   @@map("users")
 }
 
 enum UserRole {
+  OWNER
   ADMIN
+  MANAGER
+  ACCOUNTANT
   STAFF
 }
 
 // ============================================
-// CUSTOMER MODEL - Buyers (Guest + Regular)
+// CUSTOMER GROUP MODEL
+// ============================================
+model CustomerGroup {
+  id              Int      @id @default(autoincrement())
+  organizationId  String   @map("organization_id")
+  name            String
+  description     String?
+  discountPercent Decimal  @default(0) @map("discount_percent") @db.Decimal(5, 2)
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customers       Customer[]
+  
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("customer_groups")
+}
+
+// ============================================
+// CUSTOMER MODEL - Enhanced
 // ============================================
 model Customer {
-  id        Int       @id @default(autoincrement())
-  name      String
-  mobile    String?   @db.VarChar(15)
-  email     String?
-  address   String?   @db.Text
-  gstNumber String?   @map("gst_number") @db.VarChar(15)
-  isGuest   Boolean   @default(false) @map("is_guest")
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
+  id              Int       @id @default(autoincrement())
+  organizationId  String    @map("organization_id")
+  customerGroupId Int?      @map("customer_group_id")
   
-  invoices  Invoice[]
+  // Basic Info
+  customerType    CustomerType @default(BUSINESS) @map("customer_type")
+  displayName     String    @map("display_name")
+  companyName     String?   @map("company_name")
+  salutation      String?   @db.VarChar(10)
+  firstName       String?   @map("first_name")
+  lastName        String?   @map("last_name")
+  
+  // Contact
+  email           String?
+  phone           String?   @db.VarChar(20)
+  mobile          String?   @db.VarChar(20)
+  website         String?
+  
+  // Tax Info
+  gstNumber       String?   @map("gst_number") @db.VarChar(15)
+  gstTreatment    GSTTreatment @default(UNREGISTERED) @map("gst_treatment")
+  panNumber       String?   @map("pan_number") @db.VarChar(10)
+  placeOfSupply   String?   @map("place_of_supply") // State code for GST
+  taxExempt       Boolean   @default(false) @map("tax_exempt")
+  taxExemptReason String?   @map("tax_exempt_reason")
+  
+  // Billing Address
+  billingAddressLine1   String? @map("billing_address_line_1")
+  billingAddressLine2   String? @map("billing_address_line_2")
+  billingCity           String? @map("billing_city")
+  billingState          String? @map("billing_state")
+  billingPostalCode     String? @map("billing_postal_code")
+  billingCountry        String  @default("India") @map("billing_country")
+  
+  // Shipping Address
+  shippingAddressLine1  String? @map("shipping_address_line_1")
+  shippingAddressLine2  String? @map("shipping_address_line_2")
+  shippingCity          String? @map("shipping_city")
+  shippingState         String? @map("shipping_state")
+  shippingPostalCode    String? @map("shipping_postal_code")
+  shippingCountry       String  @default("India") @map("shipping_country")
+  
+  // Payment Terms
+  paymentTerms    Int       @default(30) @map("payment_terms") // Days
+  creditLimit     Decimal?  @map("credit_limit") @db.Decimal(12, 2)
+  
+  // Notes
+  notes           String?   @db.Text
+  
+  // Balance
+  openingBalance  Decimal   @default(0) @map("opening_balance") @db.Decimal(12, 2)
+  currentBalance  Decimal   @default(0) @map("current_balance") @db.Decimal(12, 2)
+  
+  isGuest         Boolean   @default(false) @map("is_guest")
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customerGroup   CustomerGroup? @relation(fields: [customerGroupId], references: [id])
+  invoices        Invoice[]
+  estimates       Estimate[]
+  creditNotes     CreditNote[]
+  payments        Payment[]
+  contacts        CustomerContact[]
+  stripePayments  StripePayment[]
 
+  @@index([organizationId])
+  @@index([displayName])
   @@index([mobile])
-  @@index([isGuest])
+  @@index([gstNumber])
   @@map("customers")
 }
 
+enum CustomerType {
+  INDIVIDUAL
+  BUSINESS
+}
+
+enum GSTTreatment {
+  REGISTERED_BUSINESS      // B2B with GST
+  UNREGISTERED             // B2C or unregistered business
+  CONSUMER                 // End consumer
+  OVERSEAS                 // Export
+  SEZ                      // Special Economic Zone
+  DEEMED_EXPORT            // Deemed export
+}
+
 // ============================================
-// PRODUCT MODEL - Inventory Items
+// CUSTOMER CONTACT MODEL
+// ============================================
+model CustomerContact {
+  id              Int      @id @default(autoincrement())
+  customerId      Int      @map("customer_id")
+  salutation      String?  @db.VarChar(10)
+  firstName       String   @map("first_name")
+  lastName        String?  @map("last_name")
+  email           String?
+  phone           String?  @db.VarChar(20)
+  mobile          String?  @db.VarChar(20)
+  designation     String?
+  department      String?
+  isPrimary       Boolean  @default(false) @map("is_primary")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  customer        Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  
+  @@index([customerId])
+  @@map("customer_contacts")
+}
+
+// ============================================
+// PRODUCT CATEGORY MODEL
+// ============================================
+model ProductCategory {
+  id              Int      @id @default(autoincrement())
+  organizationId  String   @map("organization_id")
+  parentId        Int?     @map("parent_id")
+  name            String
+  description     String?
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent          ProductCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children        ProductCategory[] @relation("CategoryHierarchy")
+  products        Product[]
+  
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("product_categories")
+}
+
+// ============================================
+// PRODUCT MODEL - Enhanced
 // ============================================
 model Product {
-  id               Int      @id @default(autoincrement())
-  name             String
-  sku              String   @unique @db.VarChar(50)
-  description      String?  @db.Text
-  price            Decimal  @db.Decimal(10, 2)
-  stockQuantity    Int      @default(0) @map("stock_quantity")
-  minStockAlert    Int      @default(5) @map("min_stock_alert")
-  category         String?  @db.VarChar(100)
-  unit             String   @default("PCS") @db.VarChar(20) // PCS, KG, LITER, etc.
-  isActive         Boolean  @default(true) @map("is_active")
-  taxRate          Decimal  @default(18.0) @db.Decimal(5, 2) @map("tax_rate") // GST % (e.g., 18%)
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  id                Int      @id @default(autoincrement())
+  organizationId    String   @map("organization_id")
+  categoryId        Int?     @map("category_id")
+  
+  // Basic Info
+  type              ProductType @default(GOODS)
+  name              String
+  sku               String   @db.VarChar(50)
+  description       String?  @db.Text
+  
+  // Pricing
+  sellingPrice      Decimal  @map("selling_price") @db.Decimal(12, 2)
+  costPrice         Decimal? @map("cost_price") @db.Decimal(12, 2)
+  mrp               Decimal? @db.Decimal(12, 2)
+  
+  // Tax
+  taxId             Int?     @map("tax_id")
+  hsnCode           String?  @map("hsn_code") @db.VarChar(8) // Harmonized System Nomenclature for goods
+  sacCode           String?  @map("sac_code") @db.VarChar(6) // Services Accounting Code
+  
+  // Inventory (only for goods)
+  trackInventory    Boolean  @default(true) @map("track_inventory")
+  stockQuantity     Int      @default(0) @map("stock_quantity")
+  openingStock      Int      @default(0) @map("opening_stock")
+  reorderLevel      Int      @default(5) @map("reorder_level")
+  
+  // Units
+  unit              String   @default("PCS") @db.VarChar(20)
+  
+  // Additional
+  barcode           String?  @db.VarChar(50)
+  brand             String?  @db.VarChar(100)
+  manufacturer      String?  @db.VarChar(100)
+  
+  isActive          Boolean  @default(true) @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  category          ProductCategory? @relation(fields: [categoryId], references: [id])
+  tax               Tax?             @relation(fields: [taxId], references: [id])
+  invoiceItems      InvoiceItem[]
+  estimateItems     EstimateItem[]
+  creditNoteItems   CreditNoteItem[]
+  inventoryLogs     InventoryLog[]
 
-  invoiceItems     InvoiceItem[]
-  inventoryLogs    InventoryLog[]
-
+  @@unique([organizationId, sku])
+  @@index([organizationId])
   @@index([sku])
   @@index([isActive])
-  @@index([stockQuantity])
   @@map("products")
 }
 
+enum ProductType {
+  GOODS
+  SERVICE
+}
+
 // ============================================
-// INVOICE MODEL - Sales Records
+// TAX MODEL
+// ============================================
+model Tax {
+  id              Int      @id @default(autoincrement())
+  organizationId  String   @map("organization_id")
+  name            String   // e.g., "GST 18%", "GST 5%"
+  rate            Decimal  @db.Decimal(5, 2) // Total rate
+  
+  // GST Components (for India)
+  isCompound      Boolean  @default(false) @map("is_compound")
+  cgstRate        Decimal? @map("cgst_rate") @db.Decimal(5, 2) // Central GST
+  sgstRate        Decimal? @map("sgst_rate") @db.Decimal(5, 2) // State GST
+  igstRate        Decimal? @map("igst_rate") @db.Decimal(5, 2) // Integrated GST
+  cessRate        Decimal? @map("cess_rate") @db.Decimal(5, 2) // Additional cess
+  
+  taxType         TaxType  @default(GST) @map("tax_type")
+  isDefault       Boolean  @default(false) @map("is_default")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  products        Product[]
+  
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("taxes")
+}
+
+enum TaxType {
+  GST
+  VAT
+  SALES_TAX
+  SERVICE_TAX
+  EXEMPT
+  CUSTOM
+}
+
+// ============================================
+// INVOICE MODEL - Enhanced
 // ============================================
 model Invoice {
-  id              Int            @id @default(autoincrement())
-  invoiceNumber   String         @unique @map("invoice_number") @db.VarChar(50)
-  customerId      Int            @map("customer_id")
-  subtotal        Decimal        @db.Decimal(12, 2)
-  taxAmount       Decimal        @default(0) @db.Decimal(10, 2) @map("tax_amount")
-  discount        Decimal        @default(0) @db.Decimal(10, 2)
-  totalAmount     Decimal        @db.Decimal(12, 2) @map("total_amount")
-  paymentMode     PaymentMode    @map("payment_mode")
-  paymentStatus   PaymentStatus  @default(PAID) @map("payment_status")
-  notes           String?        @db.Text
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
+  id                Int            @id @default(autoincrement())
+  organizationId    String         @map("organization_id")
+  customerId        Int?           @map("customer_id")
+  
+  // Walk-in Customer Details (when customerId is null)
+  customerName      String?        @map("customer_name") @db.VarChar(255)
+  customerPhone     String?        @map("customer_phone") @db.VarChar(20)
+  customerEmail     String?        @map("customer_email") @db.VarChar(255)
+  
+  // Invoice Details
+  invoiceNumber     String         @map("invoice_number") @db.VarChar(50)
+  referenceNumber   String?        @map("reference_number") @db.VarChar(50)
+  orderNumber       String?        @map("order_number") @db.VarChar(50)
+  
+  // Dates
+  invoiceDate       DateTime       @default(now()) @map("invoice_date")
+  dueDate           DateTime       @map("due_date")
+  
+  // Place of Supply (for GST)
+  placeOfSupply     String?        @map("place_of_supply")
+  isInterState      Boolean        @default(false) @map("is_inter_state")
+  
+  // Amounts
+  subtotal          Decimal        @db.Decimal(12, 2)
+  discountType      DiscountType   @default(FIXED) @map("discount_type")
+  discountValue     Decimal        @default(0) @map("discount_value") @db.Decimal(12, 2)
+  discountAmount    Decimal        @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  
+  // Tax Breakdown
+  taxableAmount     Decimal        @default(0) @map("taxable_amount") @db.Decimal(12, 2)
+  cgstAmount        Decimal        @default(0) @map("cgst_amount") @db.Decimal(10, 2)
+  sgstAmount        Decimal        @default(0) @map("sgst_amount") @db.Decimal(10, 2)
+  igstAmount        Decimal        @default(0) @map("igst_amount") @db.Decimal(10, 2)
+  cessAmount        Decimal        @default(0) @map("cess_amount") @db.Decimal(10, 2)
+  totalTax          Decimal        @default(0) @map("total_tax") @db.Decimal(10, 2)
+  
+  // Adjustments
+  roundOff          Decimal        @default(0) @map("round_off") @db.Decimal(10, 2)
+  adjustmentAmount  Decimal        @default(0) @map("adjustment_amount") @db.Decimal(10, 2)
+  adjustmentDesc    String?        @map("adjustment_desc")
+  
+  totalAmount       Decimal        @map("total_amount") @db.Decimal(12, 2)
+  balanceDue        Decimal        @default(0) @map("balance_due") @db.Decimal(12, 2)
+  
+  // Status
+  status            InvoiceStatus  @default(DRAFT)
+  paymentStatus     PaymentStatus  @default(UNPAID) @map("payment_status")
+  
+  // Shipping
+  shippingCharge    Decimal        @default(0) @map("shipping_charge") @db.Decimal(10, 2)
+  
+  // Content
+  customerNotes     String?        @map("customer_notes") @db.Text
+  termsConditions   String?        @map("terms_conditions") @db.Text
+  privateNotes      String?        @map("private_notes") @db.Text
+  
+  // Source
+  estimateId        Int?           @map("estimate_id")
+  recurringInvoiceId Int?          @map("recurring_invoice_id")
+  
+  // Attachments
+  attachments       Json?          @default("[]")
+  
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
 
-  customer        Customer       @relation(fields: [customerId], references: [id])
-  items           InvoiceItem[]
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer          Customer?      @relation(fields: [customerId], references: [id])
+  estimate          Estimate?      @relation(fields: [estimateId], references: [id])
+  recurringInvoice  RecurringInvoice? @relation(fields: [recurringInvoiceId], references: [id])
+  items             InvoiceItem[]
+  payments          Payment[]
+  creditNotes       CreditNote[]
+  stripePayments    StripePayment[]
 
+  @@unique([organizationId, invoiceNumber])
+  @@index([organizationId])
   @@index([invoiceNumber])
   @@index([customerId])
-  @@index([createdAt])
-  @@index([paymentMode])
+  @@index([invoiceDate])
+  @@index([status])
+  @@index([paymentStatus])
   @@map("invoices")
 }
 
-enum PaymentMode {
-  CASH
-  UPI
-  CARD
-  CREDIT
-  NETBANKING
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  VIEWED
+  APPROVED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+  WRITE_OFF
 }
 
 enum PaymentStatus {
+  UNPAID
+  PARTIALLY_PAID
   PAID
-  PENDING
-  PARTIAL
+}
+
+enum DiscountType {
+  FIXED
+  PERCENTAGE
 }
 
 // ============================================
-// INVOICE ITEM MODEL - Line Items in Invoice
+// INVOICE ITEM MODEL
 // ============================================
 model InvoiceItem {
-  id          Int      @id @default(autoincrement())
-  invoiceId   Int      @map("invoice_id")
-  productId   Int      @map("product_id")
-  productName String   @map("product_name") @db.VarChar(255) // Snapshot for historical data
-  quantity    Int
-  unitPrice   Decimal  @db.Decimal(10, 2) @map("unit_price")
-  taxRate     Decimal  @db.Decimal(5, 2) @map("tax_rate") // Snapshot at time of sale
-  taxAmount   Decimal  @db.Decimal(10, 2) @map("tax_amount")
-  lineTotal   Decimal  @db.Decimal(12, 2) @map("line_total")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id              Int      @id @default(autoincrement())
+  invoiceId       Int      @map("invoice_id")
+  productId       Int?     @map("product_id")
+  
+  // Item Details (snapshot)
+  itemType        ProductType @default(GOODS) @map("item_type")
+  name            String   @db.VarChar(255)
+  description     String?  @db.Text
+  hsnCode         String?  @map("hsn_code") @db.VarChar(8)
+  sacCode         String?  @map("sac_code") @db.VarChar(6)
+  
+  // Quantity & Price
+  quantity        Decimal  @db.Decimal(10, 3)
+  unit            String   @default("PCS") @db.VarChar(20)
+  rate            Decimal  @db.Decimal(12, 2)
+  
+  // Discount
+  discountType    DiscountType @default(FIXED) @map("discount_type")
+  discountValue   Decimal  @default(0) @map("discount_value") @db.Decimal(10, 2)
+  discountAmount  Decimal  @default(0) @map("discount_amount") @db.Decimal(10, 2)
+  
+  // Tax
+  taxableAmount   Decimal  @map("taxable_amount") @db.Decimal(12, 2)
+  cgstRate        Decimal  @default(0) @map("cgst_rate") @db.Decimal(5, 2)
+  cgstAmount      Decimal  @default(0) @map("cgst_amount") @db.Decimal(10, 2)
+  sgstRate        Decimal  @default(0) @map("sgst_rate") @db.Decimal(5, 2)
+  sgstAmount      Decimal  @default(0) @map("sgst_amount") @db.Decimal(10, 2)
+  igstRate        Decimal  @default(0) @map("igst_rate") @db.Decimal(5, 2)
+  igstAmount      Decimal  @default(0) @map("igst_amount") @db.Decimal(10, 2)
+  cessRate        Decimal  @default(0) @map("cess_rate") @db.Decimal(5, 2)
+  cessAmount      Decimal  @default(0) @map("cess_amount") @db.Decimal(10, 2)
+  
+  totalAmount     Decimal  @map("total_amount") @db.Decimal(12, 2)
+  
+  sortOrder       Int      @default(0) @map("sort_order")
+  createdAt       DateTime @default(now()) @map("created_at")
 
-  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  product     Product  @relation(fields: [productId], references: [id])
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product         Product? @relation(fields: [productId], references: [id])
 
   @@index([invoiceId])
   @@index([productId])
@@ -143,20 +584,617 @@ model InvoiceItem {
 }
 
 // ============================================
-// INVENTORY LOG - Audit Trail for Stock Changes
+// ESTIMATE/QUOTE MODEL
+// ============================================
+model Estimate {
+  id                Int            @id @default(autoincrement())
+  organizationId    String         @map("organization_id")
+  customerId        Int            @map("customer_id")
+  
+  estimateNumber    String         @map("estimate_number") @db.VarChar(50)
+  referenceNumber   String?        @map("reference_number") @db.VarChar(50)
+  
+  estimateDate      DateTime       @default(now()) @map("estimate_date")
+  expiryDate        DateTime       @map("expiry_date")
+  
+  // Place of Supply
+  placeOfSupply     String?        @map("place_of_supply")
+  isInterState      Boolean        @default(false) @map("is_inter_state")
+  
+  // Amounts
+  subtotal          Decimal        @db.Decimal(12, 2)
+  discountType      DiscountType   @default(FIXED) @map("discount_type")
+  discountValue     Decimal        @default(0) @map("discount_value") @db.Decimal(12, 2)
+  discountAmount    Decimal        @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  
+  // Tax
+  taxableAmount     Decimal        @default(0) @map("taxable_amount") @db.Decimal(12, 2)
+  cgstAmount        Decimal        @default(0) @map("cgst_amount") @db.Decimal(10, 2)
+  sgstAmount        Decimal        @default(0) @map("sgst_amount") @db.Decimal(10, 2)
+  igstAmount        Decimal        @default(0) @map("igst_amount") @db.Decimal(10, 2)
+  cessAmount        Decimal        @default(0) @map("cess_amount") @db.Decimal(10, 2)
+  totalTax          Decimal        @default(0) @map("total_tax") @db.Decimal(10, 2)
+  
+  // Adjustments
+  shippingCharge    Decimal        @default(0) @map("shipping_charge") @db.Decimal(10, 2)
+  adjustmentAmount  Decimal        @default(0) @map("adjustment_amount") @db.Decimal(10, 2)
+  adjustmentDesc    String?        @map("adjustment_desc")
+  
+  totalAmount       Decimal        @map("total_amount") @db.Decimal(12, 2)
+  
+  status            EstimateStatus @default(DRAFT)
+  
+  // Content
+  customerNotes     String?        @map("customer_notes") @db.Text
+  termsConditions   String?        @map("terms_conditions") @db.Text
+  privateNotes      String?        @map("private_notes") @db.Text
+  
+  attachments       Json?          @default("[]")
+  
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer          Customer       @relation(fields: [customerId], references: [id])
+  items             EstimateItem[]
+  invoices          Invoice[]
+
+  @@unique([organizationId, estimateNumber])
+  @@index([organizationId])
+  @@index([estimateNumber])
+  @@index([customerId])
+  @@index([status])
+  @@map("estimates")
+}
+
+enum EstimateStatus {
+  DRAFT
+  SENT
+  VIEWED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  INVOICED
+}
+
+// ============================================
+// ESTIMATE ITEM MODEL
+// ============================================
+model EstimateItem {
+  id              Int      @id @default(autoincrement())
+  estimateId      Int      @map("estimate_id")
+  productId       Int?     @map("product_id")
+  
+  itemType        ProductType @default(GOODS) @map("item_type")
+  name            String   @db.VarChar(255)
+  description     String?  @db.Text
+  hsnCode         String?  @map("hsn_code") @db.VarChar(8)
+  sacCode         String?  @map("sac_code") @db.VarChar(6)
+  
+  quantity        Decimal  @db.Decimal(10, 3)
+  unit            String   @default("PCS") @db.VarChar(20)
+  rate            Decimal  @db.Decimal(12, 2)
+  
+  discountType    DiscountType @default(FIXED) @map("discount_type")
+  discountValue   Decimal  @default(0) @map("discount_value") @db.Decimal(10, 2)
+  discountAmount  Decimal  @default(0) @map("discount_amount") @db.Decimal(10, 2)
+  
+  taxableAmount   Decimal  @map("taxable_amount") @db.Decimal(12, 2)
+  cgstRate        Decimal  @default(0) @map("cgst_rate") @db.Decimal(5, 2)
+  cgstAmount      Decimal  @default(0) @map("cgst_amount") @db.Decimal(10, 2)
+  sgstRate        Decimal  @default(0) @map("sgst_rate") @db.Decimal(5, 2)
+  sgstAmount      Decimal  @default(0) @map("sgst_amount") @db.Decimal(10, 2)
+  igstRate        Decimal  @default(0) @map("igst_rate") @db.Decimal(5, 2)
+  igstAmount      Decimal  @default(0) @map("igst_amount") @db.Decimal(10, 2)
+  cessRate        Decimal  @default(0) @map("cess_rate") @db.Decimal(5, 2)
+  cessAmount      Decimal  @default(0) @map("cess_amount") @db.Decimal(10, 2)
+  
+  totalAmount     Decimal  @map("total_amount") @db.Decimal(12, 2)
+  
+  sortOrder       Int      @default(0) @map("sort_order")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  estimate        Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  product         Product? @relation(fields: [productId], references: [id])
+
+  @@index([estimateId])
+  @@map("estimate_items")
+}
+
+// ============================================
+// CREDIT NOTE MODEL
+// ============================================
+model CreditNote {
+  id                Int            @id @default(autoincrement())
+  organizationId    String         @map("organization_id")
+  customerId        Int            @map("customer_id")
+  invoiceId         Int?           @map("invoice_id")
+  
+  creditNoteNumber  String         @map("credit_note_number") @db.VarChar(50)
+  referenceNumber   String?        @map("reference_number") @db.VarChar(50)
+  
+  creditNoteDate    DateTime       @default(now()) @map("credit_note_date")
+  
+  reason            CreditNoteReason @default(RETURN)
+  
+  // Place of Supply
+  placeOfSupply     String?        @map("place_of_supply")
+  isInterState      Boolean        @default(false) @map("is_inter_state")
+  
+  // Amounts
+  subtotal          Decimal        @db.Decimal(12, 2)
+  
+  // Tax
+  taxableAmount     Decimal        @default(0) @map("taxable_amount") @db.Decimal(12, 2)
+  cgstAmount        Decimal        @default(0) @map("cgst_amount") @db.Decimal(10, 2)
+  sgstAmount        Decimal        @default(0) @map("sgst_amount") @db.Decimal(10, 2)
+  igstAmount        Decimal        @default(0) @map("igst_amount") @db.Decimal(10, 2)
+  cessAmount        Decimal        @default(0) @map("cess_amount") @db.Decimal(10, 2)
+  totalTax          Decimal        @default(0) @map("total_tax") @db.Decimal(10, 2)
+  
+  totalAmount       Decimal        @map("total_amount") @db.Decimal(12, 2)
+  balanceAmount     Decimal        @default(0) @map("balance_amount") @db.Decimal(12, 2)
+  
+  status            CreditNoteStatus @default(DRAFT)
+  
+  customerNotes     String?        @map("customer_notes") @db.Text
+  privateNotes      String?        @map("private_notes") @db.Text
+  
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer          Customer       @relation(fields: [customerId], references: [id])
+  invoice           Invoice?       @relation(fields: [invoiceId], references: [id])
+  items             CreditNoteItem[]
+
+  @@unique([organizationId, creditNoteNumber])
+  @@index([organizationId])
+  @@index([customerId])
+  @@index([invoiceId])
+  @@map("credit_notes")
+}
+
+enum CreditNoteReason {
+  RETURN
+  DISCOUNT
+  QUALITY_ISSUE
+  PRICING_ERROR
+  DUPLICATE
+  ORDER_CANCELLATION
+  OTHER
+}
+
+enum CreditNoteStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  VOID
+}
+
+// ============================================
+// CREDIT NOTE ITEM MODEL
+// ============================================
+model CreditNoteItem {
+  id              Int      @id @default(autoincrement())
+  creditNoteId    Int      @map("credit_note_id")
+  productId       Int?     @map("product_id")
+  
+  itemType        ProductType @default(GOODS) @map("item_type")
+  name            String   @db.VarChar(255)
+  description     String?  @db.Text
+  hsnCode         String?  @map("hsn_code") @db.VarChar(8)
+  sacCode         String?  @map("sac_code") @db.VarChar(6)
+  
+  quantity        Decimal  @db.Decimal(10, 3)
+  unit            String   @default("PCS") @db.VarChar(20)
+  rate            Decimal  @db.Decimal(12, 2)
+  
+  taxableAmount   Decimal  @map("taxable_amount") @db.Decimal(12, 2)
+  cgstRate        Decimal  @default(0) @map("cgst_rate") @db.Decimal(5, 2)
+  cgstAmount      Decimal  @default(0) @map("cgst_amount") @db.Decimal(10, 2)
+  sgstRate        Decimal  @default(0) @map("sgst_rate") @db.Decimal(5, 2)
+  sgstAmount      Decimal  @default(0) @map("sgst_amount") @db.Decimal(10, 2)
+  igstRate        Decimal  @default(0) @map("igst_rate") @db.Decimal(5, 2)
+  igstAmount      Decimal  @default(0) @map("igst_amount") @db.Decimal(10, 2)
+  cessRate        Decimal  @default(0) @map("cess_rate") @db.Decimal(5, 2)
+  cessAmount      Decimal  @default(0) @map("cess_amount") @db.Decimal(10, 2)
+  
+  totalAmount     Decimal  @map("total_amount") @db.Decimal(12, 2)
+  
+  sortOrder       Int      @default(0) @map("sort_order")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  creditNote      CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+  product         Product?   @relation(fields: [productId], references: [id])
+
+  @@index([creditNoteId])
+  @@map("credit_note_items")
+}
+
+// ============================================
+// PAYMENT MODEL - Cash Only for Now
+// ============================================
+model Payment {
+  id              Int      @id @default(autoincrement())
+  organizationId  String   @map("organization_id")
+  customerId      Int      @map("customer_id")
+  invoiceId       Int?     @map("invoice_id")
+  
+  paymentNumber   String   @map("payment_number") @db.VarChar(50)
+  
+  paymentDate     DateTime @default(now()) @map("payment_date")
+  amount          Decimal  @db.Decimal(12, 2)
+  
+  // Payment Method
+  paymentMode     PaymentMode @default(CASH) @map("payment_mode")
+  
+  // Stripe Integration
+  stripePaymentIntentId String? @map("stripe_payment_intent_id")
+  
+  // Bank Account
+  bankAccountId   Int?     @map("bank_account_id")
+  
+  // Reference
+  referenceNumber String?  @map("reference_number") @db.VarChar(100)
+  
+  // Notes
+  notes           String?  @db.Text
+  
+  // Unused amount (for overpayments)
+  unusedAmount    Decimal  @default(0) @map("unused_amount") @db.Decimal(12, 2)
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer        Customer        @relation(fields: [customerId], references: [id])
+  invoice         Invoice?        @relation(fields: [invoiceId], references: [id])
+  bankAccount     BankAccount?    @relation(fields: [bankAccountId], references: [id])
+  stripePayments  StripePayment[]
+
+  @@unique([organizationId, paymentNumber])
+  @@index([organizationId])
+  @@index([customerId])
+  @@index([invoiceId])
+  @@index([paymentDate])
+  @@map("payments")
+}
+
+enum PaymentMode {
+  CASH
+  UPI
+  CARD
+  NETBANKING
+  CHEQUE
+  BANK_TRANSFER
+}
+
+// ============================================
+// STRIPE PAYMENT MODEL - Track Stripe transactions
+// ============================================
+model StripePayment {
+  id                  Int      @id @default(autoincrement())
+  organizationId      String   @map("organization_id")
+  paymentId           Int?     @map("payment_id")
+  
+  stripePaymentIntentId String  @unique @map("stripe_payment_intent_id")
+  stripeCustomerId      String? @map("stripe_customer_id")
+  
+  amount              Int      // Amount in smallest currency unit (paise for INR)
+  currency            String   @default("inr") @db.VarChar(3)
+  status              StripePaymentStatus @default(PENDING)
+  paymentMethod       String?  @map("payment_method") // card, upi, netbanking
+  paymentMethodType   String?  @map("payment_method_type") // visa, mastercard, googlepay, etc.
+  
+  // For invoices
+  invoiceId           Int?     @map("invoice_id")
+  customerId          Int?     @map("customer_id")
+  
+  // Metadata
+  receiptUrl          String?  @map("receipt_url") @db.Text
+  failureCode         String?  @map("failure_code")
+  failureMessage      String?  @map("failure_message") @db.Text
+  
+  metadata            Json?    @default("{}")
+  
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+  completedAt         DateTime? @map("completed_at")
+  
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payment             Payment?     @relation(fields: [paymentId], references: [id])
+  invoice             Invoice?     @relation(fields: [invoiceId], references: [id])
+  customer            Customer?    @relation(fields: [customerId], references: [id])
+  
+  @@index([organizationId])
+  @@index([stripePaymentIntentId])
+  @@index([status])
+  @@map("stripe_payments")
+}
+
+enum StripePaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+// ============================================
+// BANK ACCOUNT MODEL (For future use)
+// ============================================
+model BankAccount {
+  id              Int      @id @default(autoincrement())
+  organizationId  String   @map("organization_id")
+  
+  accountName     String   @map("account_name")
+  accountNumber   String?  @map("account_number")
+  bankName        String?  @map("bank_name")
+  ifscCode        String?  @map("ifsc_code") @db.VarChar(11)
+  branchName      String?  @map("branch_name")
+  
+  accountType     BankAccountType @default(CASH) @map("account_type")
+  
+  openingBalance  Decimal  @default(0) @map("opening_balance") @db.Decimal(12, 2)
+  currentBalance  Decimal  @default(0) @map("current_balance") @db.Decimal(12, 2)
+  
+  isPrimary       Boolean  @default(false) @map("is_primary")
+  isActive        Boolean  @default(true) @map("is_active")
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payments        Payment[]
+  expenses        Expense[]
+
+  @@index([organizationId])
+  @@map("bank_accounts")
+}
+
+enum BankAccountType {
+  CASH
+  SAVINGS
+  CURRENT
+  CREDIT_CARD
+  OTHER
+}
+
+// ============================================
+// RECURRING INVOICE MODEL
+// ============================================
+model RecurringInvoice {
+  id                Int            @id @default(autoincrement())
+  organizationId    String         @map("organization_id")
+  customerId        Int            @map("customer_id")
+  
+  profileName       String         @map("profile_name")
+  
+  // Schedule
+  frequency         RecurringFrequency @default(MONTHLY)
+  repeatEvery       Int            @default(1) @map("repeat_every")
+  startDate         DateTime       @map("start_date")
+  endDate           DateTime?      @map("end_date")
+  nextInvoiceDate   DateTime       @map("next_invoice_date")
+  
+  // Limits
+  maxInvoices       Int?           @map("max_invoices")
+  invoicesGenerated Int            @default(0) @map("invoices_generated")
+  
+  // Invoice Template
+  invoiceData       Json           @map("invoice_data") // Stores invoice items and settings
+  
+  status            RecurringStatus @default(ACTIVE)
+  
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoices          Invoice[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([nextInvoiceDate])
+  @@map("recurring_invoices")
+}
+
+enum RecurringFrequency {
+  DAILY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  YEARLY
+  CUSTOM
+}
+
+enum RecurringStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  EXPIRED
+  STOPPED
+}
+
+// ============================================
+// EXPENSE CATEGORY MODEL
+// ============================================
+model ExpenseCategory {
+  id              Int      @id @default(autoincrement())
+  organizationId  String   @map("organization_id")
+  name            String
+  description     String?
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  expenses        Expense[]
+  
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("expense_categories")
+}
+
+// ============================================
+// EXPENSE MODEL
+// ============================================
+model Expense {
+  id              Int      @id @default(autoincrement())
+  organizationId  String   @map("organization_id")
+  categoryId      Int?     @map("category_id")
+  
+  expenseDate     DateTime @map("expense_date")
+  amount          Decimal  @db.Decimal(12, 2)
+  
+  // Tax
+  isTaxInclusive  Boolean  @default(true) @map("is_tax_inclusive")
+  taxAmount       Decimal  @default(0) @map("tax_amount") @db.Decimal(10, 2)
+  
+  paymentMode     PaymentMode @default(CASH) @map("payment_mode")
+  bankAccountId   Int?     @map("bank_account_id")
+  
+  vendorName      String?  @map("vendor_name")
+  referenceNumber String?  @map("reference_number") @db.VarChar(100)
+  notes           String?  @db.Text
+  
+  // Attachments (receipts)
+  attachments     Json?    @default("[]")
+  
+  isBillable      Boolean  @default(false) @map("is_billable")
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  category        ExpenseCategory? @relation(fields: [categoryId], references: [id])
+  bankAccount     BankAccount?     @relation(fields: [bankAccountId], references: [id])
+
+  @@index([organizationId])
+  @@index([expenseDate])
+  @@index([categoryId])
+  @@map("expenses")
+}
+
+// ============================================
+// INVOICE TEMPLATE MODEL
+// ============================================
+model InvoiceTemplate {
+  id              Int      @id @default(autoincrement())
+  organizationId  String   @map("organization_id")
+  name            String
+  templateType    TemplateType @default(INVOICE) @map("template_type")
+  
+  // Template Settings
+  headerColor     String?  @map("header_color") @db.VarChar(7)
+  fontFamily      String?  @map("font_family") @db.VarChar(50)
+  
+  // Visibility options
+  showLogo        Boolean  @default(true) @map("show_logo")
+  showGstNumber   Boolean  @default(true) @map("show_gst_number")
+  showHsnCode     Boolean  @default(true) @map("show_hsn_code")
+  showPaymentInfo Boolean  @default(true) @map("show_payment_info")
+  showSignature   Boolean  @default(true) @map("show_signature")
+  
+  // Custom fields
+  customFields    Json?    @default("[]") @map("custom_fields")
+  
+  isDefault       Boolean  @default(false) @map("is_default")
+  isActive        Boolean  @default(true) @map("is_active")
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("invoice_templates")
+}
+
+enum TemplateType {
+  INVOICE
+  ESTIMATE
+  CREDIT_NOTE
+  PAYMENT_RECEIPT
+}
+
+// ============================================
+// ACTIVITY LOG MODEL - Audit Trail
+// ============================================
+model ActivityLog {
+  id              Int      @id @default(autoincrement())
+  organizationId  String   @map("organization_id")
+  userId          String?  @map("user_id")
+  
+  action          ActivityAction
+  entityType      EntityType @map("entity_type")
+  entityId        String   @map("entity_id")
+  
+  description     String   @db.Text
+  oldValues       Json?    @map("old_values")
+  newValues       Json?    @map("new_values")
+  
+  ipAddress       String?  @map("ip_address") @db.VarChar(45)
+  userAgent       String?  @map("user_agent") @db.Text
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user            User?        @relation(fields: [userId], references: [id])
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+enum ActivityAction {
+  CREATE
+  UPDATE
+  DELETE
+  VIEW
+  SEND
+  DOWNLOAD
+  CONVERT
+  PAYMENT
+  VOID
+  LOGIN
+  LOGOUT
+}
+
+enum EntityType {
+  ORGANIZATION
+  USER
+  CUSTOMER
+  PRODUCT
+  INVOICE
+  ESTIMATE
+  CREDIT_NOTE
+  PAYMENT
+  EXPENSE
+  TAX
+}
+
+// ============================================
+// INVENTORY LOG MODEL
 // ============================================
 model InventoryLog {
-  id             Int              @id @default(autoincrement())
-  productId      Int              @map("product_id")
-  transactionType TransactionType @map("transaction_type")
-  quantityChange Int              @map("quantity_change") // Positive for RESTOCK, Negative for SALE
-  previousStock  Int              @map("previous_stock")
-  newStock       Int              @map("new_stock")
-  referenceId    Int?             @map("reference_id") // InvoiceId for SALE, PO for RESTOCK
-  notes          String?          @db.Text
-  createdAt      DateTime         @default(now()) @map("created_at")
+  id              Int              @id @default(autoincrement())
+  productId       Int              @map("product_id")
+  transactionType TransactionType  @map("transaction_type")
+  quantityChange  Int              @map("quantity_change")
+  previousStock   Int              @map("previous_stock")
+  newStock        Int              @map("new_stock")
+  referenceType   EntityType?      @map("reference_type")
+  referenceId     Int?             @map("reference_id")
+  notes           String?          @db.Text
+  createdAt       DateTime         @default(now()) @map("created_at")
 
-  product        Product          @relation(fields: [productId], references: [id])
+  product         Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId])
   @@index([transactionType])
@@ -166,7 +1204,9 @@ model InventoryLog {
 
 enum TransactionType {
   SALE
+  RETURN
   RESTOCK
   ADJUSTMENT
-  RETURN
+  OPENING
+  TRANSFER
 }
