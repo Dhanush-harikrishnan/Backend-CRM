@@ -708,19 +708,25 @@ class InvoiceService {
     const paymentNumber = await organizationService.getNextSequenceNumber(organizationId, 'payment');
 
     const result = await prisma.$transaction(async (tx) => {
-      // Create payment record
+      // Create payment record - build data object conditionally for nullable customerId
+      const paymentData: any = {
+        organizationId,
+        invoiceId,
+        paymentNumber,
+        paymentDate: data.paymentDate || new Date(),
+        amount,
+        paymentMode: data.paymentMode || 'CASH',
+        referenceNumber: data.referenceNumber,
+        notes: data.notes,
+      };
+      
+      // Only add customerId if invoice has one (for walk-in customers, it's null)
+      if (invoice.customerId) {
+        paymentData.customerId = invoice.customerId;
+      }
+      
       const payment = await tx.payment.create({
-        data: {
-          organizationId,
-          customerId: invoice.customerId ?? undefined,
-          invoiceId,
-          paymentNumber,
-          paymentDate: data.paymentDate || new Date(),
-          amount,
-          paymentMode: data.paymentMode || 'CASH',
-          referenceNumber: data.referenceNumber,
-          notes: data.notes,
-        },
+        data: paymentData,
       });
 
       // Update invoice

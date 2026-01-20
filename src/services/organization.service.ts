@@ -555,37 +555,54 @@ class OrganizationService {
 
     let prefix: string;
     let startNumber: number;
-    let countField: 'invoices' | 'estimates' | 'creditNotes' | 'payments';
+    let modelName: 'invoice' | 'estimate' | 'creditNote' | 'payment';
+    let numberField: string;
 
     switch (type) {
       case 'invoice':
         prefix = org.invoicePrefix || 'INV';
         startNumber = org.invoiceStartNumber || 1;
-        countField = 'invoices';
+        modelName = 'invoice';
+        numberField = 'invoiceNumber';
         break;
       case 'estimate':
         prefix = org.estimatePrefix || 'EST';
         startNumber = org.estimateStartNumber || 1;
-        countField = 'estimates';
+        modelName = 'estimate';
+        numberField = 'estimateNumber';
         break;
       case 'creditNote':
         prefix = org.creditNotePrefix || 'CN';
         startNumber = org.creditNoteStartNumber || 1;
-        countField = 'creditNotes';
+        modelName = 'creditNote';
+        numberField = 'creditNoteNumber';
         break;
       case 'payment':
         prefix = org.paymentPrefix || 'PAY';
         startNumber = org.paymentStartNumber || 1;
-        countField = 'payments';
+        modelName = 'payment';
+        numberField = 'paymentNumber';
         break;
     }
 
-    // Get count of existing documents
-    const count = await (prisma as any)[countField === 'creditNotes' ? 'creditNote' : countField.slice(0, -1)].count({
+    // Get the last document to find the highest sequence number
+    const lastDocument = await (prisma as any)[modelName].findFirst({
       where: { organizationId },
+      orderBy: { createdAt: 'desc' },
+      select: { [numberField]: true },
     });
 
-    const sequenceNumber = startNumber + count;
+    let sequenceNumber = startNumber;
+
+    if (lastDocument && lastDocument[numberField]) {
+      // Extract the number from the last document number (e.g., "INV-2026-0005" -> 5)
+      const lastNumber = lastDocument[numberField] as string;
+      const match = lastNumber.match(/(\d+)$/);
+      if (match) {
+        sequenceNumber = parseInt(match[1], 10) + 1;
+      }
+    }
+
     const paddedNumber = sequenceNumber.toString().padStart(4, '0');
 
     return `${prefix}-${fy}-${paddedNumber}`;

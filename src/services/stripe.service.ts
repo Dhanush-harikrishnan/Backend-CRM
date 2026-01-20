@@ -12,7 +12,7 @@ const stripe = new Stripe(config.stripe.secretKey, {
 
 export interface CreatePaymentIntentInput {
   organizationId: string;
-  customerId: number;
+  customerId?: number; // Optional for walk-in customers
   invoiceId?: number;
   amount: number; // Amount in INR (will be converted to paise)
   currency?: string;
@@ -45,25 +45,38 @@ class StripeService {
 
     const { organizationId, customerId, invoiceId, amount, currency = 'inr', paymentMethodTypes = ['card', 'upi'], description, metadata } = data;
 
-    // Validate customer exists
-    const customer = await prisma.customer.findFirst({
-      where: { id: customerId, organizationId },
-      include: {
-        organization: {
-          select: { name: true, email: true },
-        },
-      },
+    // Get organization for description
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { name: true, email: true },
     });
 
-    if (!customer) {
-      throw new AppError('Customer not found', 404);
+    if (!organization) {
+      throw new AppError('Organization not found', 404);
+    }
+
+    // Validate customer if provided
+    let customer = null;
+    let customerName = 'Walk-in Customer';
+    let customerEmail = '';
+    
+    if (customerId) {
+      customer = await prisma.customer.findFirst({
+        where: { id: customerId, organizationId },
+      });
+
+      if (!customer) {
+        throw new AppError('Customer not found', 404);
+      }
+      customerName = customer.displayName;
+      customerEmail = customer.email || '';
     }
 
     // Validate invoice if provided
     let invoice = null;
     if (invoiceId) {
       invoice = await prisma.invoice.findFirst({
-        where: { id: invoiceId, organizationId, customerId },
+        where: { id: invoiceId, organizationId },
       });
 
       if (!invoice) {
@@ -72,6 +85,11 @@ class StripeService {
 
       if (invoice.paymentStatus === 'PAID') {
         throw new AppError('Invoice is already fully paid', 400);
+      }
+      
+      // Use invoice customer name if walk-in
+      if (!customerId && invoice.customerName) {
+        customerName = invoice.customerName;
       }
     }
 
@@ -83,13 +101,13 @@ class StripeService {
       amount: amountInSmallestUnit,
       currency,
       payment_method_types: paymentMethodTypes,
-      description: description || `Payment for ${customer.organization.name}`,
+      description: description || `Payment for ${organization.name}`,
       metadata: {
         organizationId,
-        customerId: customerId.toString(),
+        customerId: customerId?.toString() || '',
         invoiceId: invoiceId?.toString() || '',
-        customerName: customer.displayName,
-        customerEmail: customer.email || '',
+        customerName,
+        customerEmail,
         ...metadata,
       },
     });
@@ -111,7 +129,7 @@ class StripeService {
       },
     });
 
-    logger.info(`Created payment intent ${paymentIntent.id} for customer ${customerId}`);
+    logger.info(`Created payment intent ${paymentIntent.id} for ${customerName}`);
 
     return {
       paymentIntentId: paymentIntent.id,

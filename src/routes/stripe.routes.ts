@@ -10,7 +10,7 @@ const router = Router();
 // Validation schemas
 const createPaymentIntentSchema = z.object({
   body: z.object({
-    customerId: z.number().int().positive('Customer ID is required'),
+    customerId: z.number().int().positive().optional(), // Optional for walk-in customers
     invoiceId: z.number().int().positive().optional(),
     amount: z.number().positive('Amount must be greater than 0'),
     paymentMethodTypes: z.array(z.enum(['card', 'upi'])).optional(),
