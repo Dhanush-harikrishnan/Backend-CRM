@@ -13,7 +13,7 @@ const createPaymentIntentSchema = z.object({
     customerId: z.number().int().positive().optional(), // Optional for walk-in customers
     invoiceId: z.number().int().positive().optional(),
     amount: z.number().positive('Amount must be greater than 0'),
-    paymentMethodTypes: z.array(z.enum(['card', 'upi'])).optional(),
+    paymentMethodTypes: z.array(z.enum(['card'])).optional(),
     description: z.string().optional(),
   }),
 });
@@ -324,7 +324,7 @@ router.post(
         customerId: invoice.customerId,
         invoiceId: invoice.id,
         amount: dueAmount,
-        paymentMethodTypes: paymentMethodTypes || ['card', 'upi'],
+        paymentMethodTypes: paymentMethodTypes || ['card'],
         description: `Payment for Invoice ${invoice.invoiceNumber}`,
       });
 

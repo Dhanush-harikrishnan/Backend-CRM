@@ -14,9 +14,9 @@ export interface CreatePaymentIntentInput {
   organizationId: string;
   customerId?: number; // Optional for walk-in customers
   invoiceId?: number;
-  amount: number; // Amount in INR (will be converted to paise)
+  amount: number; // Amount in smallest currency unit
   currency?: string;
-  paymentMethodTypes?: ('card' | 'upi')[];
+  paymentMethodTypes?: ('card')[];
   description?: string;
   metadata?: Record<string, string>;
 }
@@ -36,14 +36,14 @@ class StripeService {
   }
 
   /**
-   * Create a payment intent for card/UPI payment
+   * Create a payment intent for card payment
    */
   async createPaymentIntent(data: CreatePaymentIntentInput) {
     if (!this.isConfigured()) {
       throw new AppError('Stripe is not configured. Please add STRIPE_SECRET_KEY to environment.', 500);
     }
 
-    const { organizationId, customerId, invoiceId, amount, currency = 'inr', paymentMethodTypes = ['card', 'upi'], description, metadata } = data;
+    const { organizationId, customerId, invoiceId, amount, currency = 'usd', paymentMethodTypes = ['card'], description, metadata } = data;
 
     // Get organization for description
     const organization = await prisma.organization.findUnique({
