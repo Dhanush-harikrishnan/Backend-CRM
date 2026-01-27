@@ -6,7 +6,7 @@ import customerService from './customer.service';
 
 export interface InvoiceItemInput {
   productId?: number | string; // Accept both number and MongoDB ObjectId string
-  itemType?: 'GOODS' | 'SERVICE';
+  itemType?: 'GOODS' | 'SERVICE' | 'BUNDLE';
   name?: string; // Made optional - will be looked up from product if not provided
   description?: string;
   hsnCode?: string;
@@ -203,12 +203,17 @@ class InvoiceService {
     const products = productIds.length > 0
       ? await prisma.product.findMany({
         where: { id: { in: productIds }, organizationId, isActive: true },
-        include: { tax: true },
+        include: {
+          tax: true,
+          bundleParents: {
+            include: { child: true }
+          }
+        },
       })
       : [];
     const productMap = new Map(products.map(p => [p.id, p]));
 
-    // Validate stock for goods
+    // Validate stock for goods and bundles
     for (const item of items) {
       if (item.productId) {
         const prodId = typeof item.productId === 'string' ? parseInt(item.productId, 10) : item.productId;
@@ -216,8 +221,20 @@ class InvoiceService {
         if (!product) {
           throw new AppError(`Product with ID ${item.productId} not found`, 404);
         }
+
+        // Validate Goods Stock
         if (product.type === 'GOODS' && product.trackInventory && product.stockQuantity < item.quantity) {
           throw new AppError(`Insufficient stock for ${product.name}. Available: ${product.stockQuantity}`, 400);
+        }
+
+        // Validate Bundle Components Stock
+        if (product.type === 'BUNDLE') {
+          for (const component of product.bundleParents) {
+            const requiredQty = Number(item.quantity) * Number(component.quantity);
+            if (component.child.trackInventory && component.child.stockQuantity < requiredQty) {
+              throw new AppError(`Insufficient stock for component ${component.child.name} (in ${product.name}). Required: ${requiredQty}, Available: ${component.child.stockQuantity}`, 400);
+            }
+          }
         }
       }
     }
@@ -357,31 +374,64 @@ class InvoiceService {
         },
       });
 
-      // Decrement stock for goods
+      // Decrement stock for goods and bundles
       for (const item of items) {
         if (item.productId) {
           const itemProdId = typeof item.productId === 'string' ? parseInt(item.productId, 10) : item.productId;
           const product = productMap.get(itemProdId);
-          if (product && product.type === 'GOODS' && product.trackInventory) {
-            await tx.product.update({
-              where: { id: itemProdId },
-              data: {
-                stockQuantity: { decrement: item.quantity },
-              },
-            });
 
-            await tx.inventoryLog.create({
-              data: {
-                productId: itemProdId,
-                transactionType: 'SALE',
-                quantityChange: -item.quantity,
-                previousStock: product.stockQuantity,
-                newStock: product.stockQuantity - item.quantity,
-                referenceType: 'INVOICE',
-                referenceId: inv.id,
-                notes: `Sale via Invoice ${inv.invoiceNumber}`,
-              },
-            });
+          if (product) {
+            // Handle Goods
+            if (product.type === 'GOODS' && product.trackInventory) {
+              await tx.product.update({
+                where: { id: itemProdId },
+                data: {
+                  stockQuantity: { decrement: item.quantity },
+                },
+              });
+
+              await tx.inventoryLog.create({
+                data: {
+                  productId: itemProdId,
+                  transactionType: 'SALE',
+                  quantityChange: -item.quantity,
+                  previousStock: product.stockQuantity,
+                  newStock: product.stockQuantity - item.quantity,
+                  referenceType: 'INVOICE',
+                  referenceId: inv.id,
+                  notes: `Sale via Invoice ${inv.invoiceNumber}`,
+                },
+              });
+            }
+
+            // Handle Bundles
+            if (product.type === 'BUNDLE') {
+              for (const component of product.bundleParents) {
+                if (component.child.trackInventory) {
+                  const consumeQty = Number(item.quantity) * Number(component.quantity);
+
+                  await tx.product.update({
+                    where: { id: component.childId },
+                    data: {
+                      stockQuantity: { decrement: consumeQty },
+                    },
+                  });
+
+                  await tx.inventoryLog.create({
+                    data: {
+                      productId: component.childId,
+                      transactionType: 'MANUFACTURING',
+                      quantityChange: -consumeQty,
+                      previousStock: component.child.stockQuantity,
+                      newStock: component.child.stockQuantity - consumeQty,
+                      referenceType: 'INVOICE',
+                      referenceId: inv.id,
+                      notes: `Consumed for ${product.name} (Invoice ${inv.invoiceNumber})`,
+                    },
+                  });
+                }
+              }
+            }
           }
         }
       }
@@ -627,24 +677,67 @@ class InvoiceService {
 
         // Restore stock
         for (const item of items) {
-          if (item.productId && item.product?.trackInventory) {
-            await tx.product.update({
+          if (item.productId) {
+            // Need to fetch full product details including bundle
+            const product = await tx.product.findUnique({
               where: { id: item.productId },
-              data: { stockQuantity: { increment: Number(item.quantity) } },
+              include: {
+                bundleParents: {
+                  include: { child: true }
+                }
+              }
             });
 
-            await tx.inventoryLog.create({
-              data: {
-                productId: item.productId,
-                transactionType: 'ADJUSTMENT',
-                quantityChange: Number(item.quantity),
-                previousStock: item.product.stockQuantity,
-                newStock: item.product.stockQuantity + Number(item.quantity),
-                referenceType: 'INVOICE',
-                referenceId: id,
-                notes: `Voided Invoice ${invoice.invoiceNumber}`,
-              },
-            });
+            if (product) {
+              // Restore Goods
+              if (product.type === 'GOODS' && product.trackInventory) {
+                await tx.product.update({
+                  where: { id: item.productId },
+                  data: { stockQuantity: { increment: Number(item.quantity) } },
+                });
+
+                await tx.inventoryLog.create({
+                  data: {
+                    productId: item.productId,
+                    transactionType: 'ADJUSTMENT',
+                    quantityChange: Number(item.quantity),
+                    previousStock: product.stockQuantity,
+                    newStock: product.stockQuantity + Number(item.quantity),
+                    referenceType: 'INVOICE',
+                    referenceId: id,
+                    notes: `Voided Invoice ${invoice.invoiceNumber}`,
+                  },
+                });
+              }
+
+              // Restore Bundle Components
+              if (product.type === 'BUNDLE') {
+                for (const component of product.bundleParents) {
+                  if (component.child.trackInventory) {
+                    const restoreQty = Number(item.quantity) * Number(component.quantity);
+                    const currentStock = component.child.stockQuantity;
+
+                    await tx.product.update({
+                      where: { id: component.childId },
+                      data: { stockQuantity: { increment: restoreQty } },
+                    });
+
+                    await tx.inventoryLog.create({
+                      data: {
+                        productId: component.childId,
+                        transactionType: 'ADJUSTMENT',
+                        quantityChange: restoreQty,
+                        previousStock: currentStock,
+                        newStock: currentStock + restoreQty,
+                        referenceType: 'INVOICE',
+                        referenceId: id,
+                        notes: `Voided Invoice ${invoice.invoiceNumber} (Bundle Restore)`,
+                      },
+                    });
+                  }
+                }
+              }
+            }
           }
         }
 
@@ -795,12 +888,34 @@ class InvoiceService {
     await prisma.$transaction(async (tx) => {
       for (const item of invoice.items) {
         if (item.productId) {
-          const product = await tx.product.findUnique({ where: { id: item.productId } });
-          if (product && product.trackInventory) {
-            await tx.product.update({
-              where: { id: item.productId },
-              data: { stockQuantity: { increment: Number(item.quantity) } },
-            });
+          const product = await tx.product.findUnique({
+            where: { id: item.productId },
+            include: {
+              bundleParents: {
+                include: { child: true }
+              }
+            }
+          });
+
+          if (product) {
+            if (product.type === 'GOODS' && product.trackInventory) {
+              await tx.product.update({
+                where: { id: item.productId },
+                data: { stockQuantity: { increment: Number(item.quantity) } },
+              });
+            }
+
+            if (product.type === 'BUNDLE') {
+              for (const component of product.bundleParents) {
+                if (component.child.trackInventory) {
+                  const restoreQty = Number(item.quantity) * Number(component.quantity);
+                  await tx.product.update({
+                    where: { id: component.childId },
+                    data: { stockQuantity: { increment: restoreQty } },
+                  });
+                }
+              }
+            }
           }
         }
       }

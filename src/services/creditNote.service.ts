@@ -5,7 +5,7 @@ import organizationService from './organization.service';
 
 export interface CreditNoteItemInput {
   productId?: number;
-  itemType?: 'GOODS' | 'SERVICE';
+  itemType?: 'GOODS' | 'SERVICE' | 'BUNDLE';
   name: string;
   description?: string;
   hsnCode?: string;

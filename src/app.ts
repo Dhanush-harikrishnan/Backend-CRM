@@ -20,6 +20,8 @@ import expenseRoutes from './routes/expense.routes';
 import reportRoutes from './routes/report.routes';
 import stripeRoutes from './routes/stripe.routes';
 import interactionRoutes from './routes/interaction.routes';
+import vendorRoutes from './routes/vendor.routes';
+import purchaseRoutes from './routes/purchase.routes';
 
 // ============================================
 // EXPRESS APP SETUP
@@ -119,6 +121,8 @@ app.use(`${API_PREFIX}/estimates`, estimateRoutes);
 app.use(`${API_PREFIX}/credit-notes`, creditNoteRoutes);
 app.use(`${API_PREFIX}/payments`, paymentRoutes);
 app.use(`${API_PREFIX}/expenses`, expenseRoutes);
+app.use(`${API_PREFIX}/vendors`, vendorRoutes);
+app.use(`${API_PREFIX}/purchases`, purchaseRoutes);
 
 // Stripe Payments (UPI, Card)
 app.use(`${API_PREFIX}/stripe`, stripeRoutes);
