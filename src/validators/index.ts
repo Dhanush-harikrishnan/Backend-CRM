@@ -129,6 +129,11 @@ export const createCustomerSchema = z.object({
     pan: panValidator,
     notes: z.string().optional().nullable(),
     groupId: z.number().int().positive().optional().nullable(),
+
+    // CRM
+    lifecycleStage: z.enum(['LEAD', 'PROSPECT', 'CUSTOMER', 'CHURNED']).default('CUSTOMER'),
+    source: z.enum(['WEBSITE', 'REFERRAL', 'ADVERTISEMENT', 'COLD_CALL', 'EVENT', 'OTHER']).optional().nullable(),
+    assignedToUserId: z.string().optional().nullable(),
   }),
 });
 
@@ -143,6 +148,8 @@ export const customerListQuerySchema = z.object({
     customerType: z.enum(['BUSINESS', 'INDIVIDUAL']).optional(),
     groupId: z.string().regex(/^\d+$/).optional(),
     isActive: z.enum(['true', 'false']).optional(),
+    lifecycleStage: z.enum(['LEAD', 'PROSPECT', 'CUSTOMER', 'CHURNED']).optional(),
+    assignedToUserId: z.string().optional(),
   }),
 });
 
@@ -184,6 +191,12 @@ export const createProductSchema = z.object({
 
     // Other
     barcode: z.string().optional().nullable(),
+
+    // Bundle Items (for BUNDLE type)
+    bundleItems: z.array(z.object({
+      childId: z.number().int().positive(),
+      quantity: z.number().positive(),
+    })).optional(),
   }),
 });
 
@@ -498,6 +511,32 @@ export const reportDateRangeSchema = z.object({
 // ============================================
 // TYPE EXPORTS
 // ============================================
+// ============================================
+// INTERACTION VALIDATION SCHEMAS
+// ============================================
+export const createInteractionSchema = z.object({
+  body: z.object({
+    customerId: z.number().int().positive(),
+    type: z.enum(['CALL', 'EMAIL', 'MEETING', 'NOTE', 'SMS', 'WHATSAPP']),
+    description: z.string().min(1),
+    date: z.string().datetime().optional(),
+    outcome: z.string().optional().nullable(),
+  }),
+});
+
+export const updateInteractionSchema = z.object({
+  params: idParam,
+  body: createInteractionSchema.shape.body.partial().omit({ customerId: true }),
+});
+
+export const interactionListQuerySchema = z.object({
+  query: paginationQuery.merge(dateRangeQuery).extend({
+    customerId: z.string().regex(/^\d+$/).optional(),
+    userId: z.string().optional(),
+    type: z.enum(['CALL', 'EMAIL', 'MEETING', 'NOTE', 'SMS', 'WHATSAPP']).optional(),
+  }),
+});
+
 export type CreateOrganizationInput = z.infer<typeof createOrganizationSchema>['body'];
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>['body'];
 export type CreateProductInput = z.infer<typeof createProductSchema>['body'];
@@ -506,3 +545,86 @@ export type CreateEstimateInput = z.infer<typeof createEstimateSchema>['body'];
 export type CreateCreditNoteInput = z.infer<typeof createCreditNoteSchema>['body'];
 export type CreatePaymentInput = z.infer<typeof createPaymentSchema>['body'];
 export type CreateExpenseInput = z.infer<typeof createExpenseSchema>['body'];
+// ============================================
+// VENDOR VALIDATION SCHEMAS
+// ============================================
+export const createVendorSchema = z.object({
+  body: z.object({
+    name: z.string().min(2, 'Name must be at least 2 characters'),
+    contactName: z.string().optional().nullable(),
+    email: z.string().email().optional().nullable(),
+    phone: z.string().optional().nullable(),
+    gstNumber: gstNumberValidator,
+    panNumber: panValidator,
+    addressLine1: z.string().optional().nullable(),
+    addressLine2: z.string().optional().nullable(),
+    city: z.string().optional().nullable(),
+    state: z.string().optional().nullable(),
+    postalCode: z.string().optional().nullable(),
+    country: z.string().default('India'),
+    website: z.string().url().optional().nullable(),
+    notes: z.string().optional().nullable(),
+  }),
+});
+
+export const updateVendorSchema = z.object({
+  params: idParam,
+  body: createVendorSchema.shape.body.partial().extend({
+    isActive: z.boolean().optional(),
+  }),
+});
+
+export const vendorListQuerySchema = z.object({
+  query: paginationQuery.extend({
+    search: z.string().optional(),
+    isActive: z.enum(['true', 'false']).optional(),
+  }),
+});
+
+// ============================================
+// PURCHASE VALIDATION SCHEMAS
+// ============================================
+const purchaseItemSchema = z.object({
+  productId: z.union([z.number().int().positive(), z.string()]).transform(val => typeof val === 'string' ? parseInt(val) : val),
+  quantity: z.union([z.number().positive(), z.string().transform(val => parseFloat(val))]),
+  rate: z.union([z.number().min(0), z.string().transform(val => parseFloat(val))]),
+  taxId: z.union([z.number().int().positive(), z.string()]).optional().nullable(),
+});
+
+export const createPurchaseSchema = z.object({
+  body: z.object({
+    vendorId: z.number().int().positive(),
+    purchaseDate: z.string().optional().nullable(),
+    dueDate: z.string().optional().nullable(),
+    referenceNumber: z.string().optional().nullable(),
+    items: z.array(purchaseItemSchema).min(1, 'Purchase must have at least one item'),
+    discountAmount: z.number().min(0).optional(),
+    adjustmentAmount: z.number().optional(),
+    notes: z.string().optional().nullable(),
+    status: z.enum(['DRAFT', 'SENT', 'RECEIVED', 'PARTIALLY_PAID', 'PAID']).default('DRAFT'),
+  }),
+});
+
+export const updatePurchaseSchema = z.object({
+  params: idParam,
+  body: createPurchaseSchema.shape.body.partial(),
+});
+
+export const updatePurchaseStatusSchema = z.object({
+  params: idParam,
+  body: z.object({
+    status: z.enum(['DRAFT', 'SENT', 'RECEIVED', 'PARTIALLY_PAID', 'PAID', 'OVERDUE', 'CANCELLED']),
+  }),
+});
+
+export const purchaseListQuerySchema = z.object({
+  query: paginationQuery.merge(dateRangeQuery).extend({
+    search: z.string().optional(),
+    vendorId: z.string().regex(/^\d+$/).optional(),
+    status: z.enum(['DRAFT', 'SENT', 'RECEIVED', 'PARTIALLY_PAID', 'PAID', 'OVERDUE', 'CANCELLED']).optional(),
+  }),
+});
+
+export type CreateInteractionInput = z.infer<typeof createInteractionSchema>['body'];
+export type CreateVendorInput = z.infer<typeof createVendorSchema>['body'];
+export type CreatePurchaseInput = z.infer<typeof createPurchaseSchema>['body'];

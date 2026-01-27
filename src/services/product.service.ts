@@ -5,7 +5,7 @@ import logger from '../config/logger';
 export interface CreateProductInput {
   organizationId: string;
   categoryId?: number;
-  type?: 'GOODS' | 'SERVICE';
+  type?: 'GOODS' | 'SERVICE' | 'BUNDLE';
   name: string;
   sku: string;
   description?: string;
@@ -23,6 +23,10 @@ export interface CreateProductInput {
   barcode?: string;
   brand?: string;
   manufacturer?: string;
+  bundleItems?: {
+    childId: number;
+    quantity: number;
+  }[];
 }
 
 export interface UpdateProductInput extends Partial<Omit<CreateProductInput, 'organizationId'>> {
@@ -33,7 +37,7 @@ export interface ProductListFilters {
   organizationId: string;
   search?: string;
   categoryId?: number;
-  type?: 'GOODS' | 'SERVICE';
+  type?: 'GOODS' | 'SERVICE' | 'BUNDLE';
   taxId?: number;
   isActive?: boolean;
   lowStock?: boolean;
@@ -67,35 +71,53 @@ class ProductService {
       }
     }
 
-    // For services, disable inventory tracking
-    const trackInventory = data.type === 'SERVICE' ? false : (data.trackInventory ?? true);
+    // For services and bundles, disable inventory tracking (bundles track component stock)
+    const trackInventory = (data.type === 'SERVICE' || data.type === 'BUNDLE') ? false : (data.trackInventory ?? true);
 
-    const product = await prisma.product.create({
-      data: {
-        ...data,
-        trackInventory,
-        stockQuantity: trackInventory ? (data.stockQuantity || data.openingStock || 0) : 0,
-        openingStock: trackInventory ? (data.openingStock || data.stockQuantity || 0) : 0,
-      },
-      include: {
-        category: true,
-        tax: true,
-      },
-    });
+    // Create product in transaction (for bundles)
+    const product = await prisma.$transaction(async (tx) => {
+      const { bundleItems, ...productData } = data;
 
-    // Create opening stock inventory log if applicable
-    if (trackInventory && product.openingStock > 0) {
-      await prisma.inventoryLog.create({
+      const newProduct = await tx.product.create({
         data: {
-          productId: product.id,
-          transactionType: 'OPENING',
-          quantityChange: product.openingStock,
-          previousStock: 0,
-          newStock: product.openingStock,
-          notes: 'Opening stock',
+          ...productData,
+          trackInventory,
+          stockQuantity: trackInventory ? (data.stockQuantity || data.openingStock || 0) : 0,
+          openingStock: trackInventory ? (data.openingStock || data.stockQuantity || 0) : 0,
+        },
+        include: {
+          category: true,
+          tax: true,
         },
       });
-    }
+
+      // Handle Bundle Items
+      if (data.type === 'BUNDLE' && bundleItems && bundleItems.length > 0) {
+        await tx.productBundleItem.createMany({
+          data: bundleItems.map(item => ({
+            parentId: newProduct.id,
+            childId: item.childId,
+            quantity: item.quantity,
+          })),
+        });
+      }
+
+      // Create opening stock inventory log if applicable
+      if (trackInventory && newProduct.openingStock > 0) {
+        await tx.inventoryLog.create({
+          data: {
+            productId: newProduct.id,
+            transactionType: 'OPENING',
+            quantityChange: newProduct.openingStock,
+            previousStock: 0,
+            newStock: newProduct.openingStock,
+            notes: 'Opening stock',
+          },
+        });
+      }
+
+      return newProduct;
+    });
 
     logger.info(`Product created: ${product.id} - ${product.name}`);
     return product;
@@ -199,11 +221,31 @@ class ProductService {
           take: 20,
           orderBy: { createdAt: 'desc' },
         },
+        bundleParents: {
+          include: {
+            child: {
+              select: { id: true, name: true, sku: true, unit: true, stockQuantity: true, sellingPrice: true }
+            }
+          }
+        },
       },
     });
 
     if (!product) {
       throw new AppError('Product not found', 404);
+    }
+
+    // Map bundle items to easier format if it's a bundle
+    if (product.type === 'BUNDLE' && product.bundleParents.length > 0) {
+      return {
+        ...product,
+        bundleItems: product.bundleParents.map(bp => ({
+          childId: bp.childId,
+          quantity: Number(bp.child.stockQuantity), // Wait, this is stock quantity of child. We need required quantity.
+          requiredQuantity: Number(bp.quantity),
+          child: bp.child
+        }))
+      };
     }
 
     return product;
@@ -241,18 +283,44 @@ class ProductService {
       }
     }
 
-    // For services, ensure inventory tracking is disabled
-    if (data.type === 'SERVICE') {
+    // For services and bundles, ensure inventory tracking is disabled
+    if (data.type === 'SERVICE' || data.type === 'BUNDLE') {
       data.trackInventory = false;
     }
 
-    const product = await prisma.product.update({
-      where: { id },
-      data,
-      include: {
-        category: true,
-        tax: true,
-      },
+    const { bundleItems, ...updateData } = data;
+
+    const product = await prisma.$transaction(async (tx) => {
+      // Update basic details
+      const updatedProduct = await tx.product.update({
+        where: { id },
+        data: updateData,
+        include: {
+          category: true,
+          tax: true,
+        },
+      });
+
+      // Update Bundle Items if provided
+      if (data.type === 'BUNDLE' && bundleItems !== undefined) {
+        // Delete existing items
+        await tx.productBundleItem.deleteMany({
+          where: { parentId: id },
+        });
+
+        // Add new items
+        if (bundleItems.length > 0) {
+          await tx.productBundleItem.createMany({
+            data: bundleItems.map(item => ({
+              parentId: id,
+              childId: item.childId,
+              quantity: item.quantity,
+            })),
+          });
+        }
+      }
+
+      return updatedProduct;
     });
 
     logger.info(`Product updated: ${product.id}`);
