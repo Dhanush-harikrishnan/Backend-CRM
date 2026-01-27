@@ -37,6 +37,9 @@ export interface CreateCustomerInput {
   creditLimit?: number;
   notes?: string;
   openingBalance?: number;
+  lifecycleStage?: 'LEAD' | 'PROSPECT' | 'CUSTOMER' | 'CHURNED';
+  source?: 'WEBSITE' | 'REFERRAL' | 'ADVERTISEMENT' | 'COLD_CALL' | 'EVENT' | 'OTHER';
+  assignedToUserId?: string;
   contacts?: {
     salutation?: string;
     firstName: string;
@@ -62,6 +65,8 @@ export interface CustomerListFilters {
   gstTreatment?: string;
   hasOutstandingBalance?: boolean;
   isActive?: boolean;
+  lifecycleStage?: string;
+  assignedToUserId?: string;
   page?: number;
   limit?: number;
   sortBy?: 'displayName' | 'createdAt' | 'currentBalance';
@@ -84,6 +89,16 @@ class CustomerService {
     const gstTreatment = data.gstNumber 
       ? (data.gstTreatment || 'REGISTERED_BUSINESS')
       : (data.gstTreatment || 'UNREGISTERED');
+
+    // Validate assigned user if provided
+    if (data.assignedToUserId) {
+      const assignedUser = await prisma.user.findFirst({
+        where: { id: data.assignedToUserId, organizationId: data.organizationId },
+      });
+      if (!assignedUser) {
+        throw new AppError('Assigned user not found in this organization', 400);
+      }
+    }
 
     // Create customer with contacts in transaction
     const customer = await prisma.$transaction(async (tx) => {
@@ -153,6 +168,14 @@ class CustomerService {
       where.gstTreatment = gstTreatment;
     }
 
+    if (filters.lifecycleStage) {
+      where.lifecycleStage = filters.lifecycleStage;
+    }
+
+    if (filters.assignedToUserId) {
+      where.assignedToUserId = filters.assignedToUserId;
+    }
+
     if (hasOutstandingBalance !== undefined) {
       if (hasOutstandingBalance) {
         where.currentBalance = { gt: 0 };
@@ -184,6 +207,9 @@ class CustomerService {
           customerGroup: {
             select: { id: true, name: true, discountPercent: true },
           },
+          assignedToUser: {
+            select: { id: true, name: true },
+          },
           _count: {
             select: { invoices: true },
           },
@@ -211,6 +237,9 @@ class CustomerService {
       where: { id, organizationId },
       include: {
         customerGroup: true,
+        assignedToUser: {
+          select: { id: true, name: true, email: true },
+        },
         contacts: {
           where: { isActive: true },
           orderBy: { isPrimary: 'desc' },
@@ -246,6 +275,7 @@ class CustomerService {
             estimates: true,
             creditNotes: true,
             payments: true,
+            interactions: true,
           },
         },
       },
@@ -296,6 +326,16 @@ class CustomerService {
         gstTreatment = 'REGISTERED_BUSINESS';
       } else if (!data.gstNumber && existing.gstTreatment === 'REGISTERED_BUSINESS') {
         gstTreatment = 'UNREGISTERED';
+      }
+    }
+
+    // Validate assigned user if provided
+    if (data.assignedToUserId) {
+      const assignedUser = await prisma.user.findFirst({
+        where: { id: data.assignedToUserId, organizationId },
+      });
+      if (!assignedUser) {
+        throw new AppError('Assigned user not found in this organization', 400);
       }
     }
 

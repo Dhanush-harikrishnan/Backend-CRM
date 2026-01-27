@@ -23,7 +23,7 @@ export class CustomerController {
   getAllCustomers = asyncHandler(
     async (req: AuthRequest, res: Response) => {
       const organizationId = req.user!.organizationId;
-      const { search, page, limit, sortBy, sortOrder, customerType, isActive } = req.query;
+      const { search, page, limit, sortBy, sortOrder, customerType, isActive, lifecycleStage, assignedToUserId } = req.query;
       
       const result = await customerService.getAllCustomers({
         organizationId,
@@ -34,6 +34,8 @@ export class CustomerController {
         sortOrder: sortOrder as 'asc' | 'desc',
         customerType: customerType as any,
         isActive: isActive === 'true' ? true : isActive === 'false' ? false : undefined,
+        lifecycleStage: lifecycleStage as string,
+        assignedToUserId: assignedToUserId as string,
       });
 
       res.status(200).json({

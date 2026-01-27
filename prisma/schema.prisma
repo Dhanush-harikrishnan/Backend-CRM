@@ -91,6 +91,7 @@ model Organization {
   recurringInvoices   RecurringInvoice[]
   invoiceTemplates    InvoiceTemplate[]
   stripePayments      StripePayment[]
+  interactions        Interaction[]
 
   @@index([slug])
   @@index([isActive])
@@ -145,6 +146,8 @@ model User {
   
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   activityLogs    ActivityLog[]
+  assignedCustomers Customer[] @relation("AssignedTo")
+  interactions    Interaction[]
   
   @@unique([organizationId, email])
   @@index([organizationId])
@@ -158,6 +161,22 @@ enum UserRole {
   MANAGER
   ACCOUNTANT
   STAFF
+}
+
+enum LifecycleStage {
+  LEAD
+  PROSPECT
+  CUSTOMER
+  CHURNED
+}
+
+enum CustomerSource {
+  WEBSITE
+  REFERRAL
+  ADVERTISEMENT
+  COLD_CALL
+  EVENT
+  OTHER
 }
 
 // ============================================
@@ -230,6 +249,11 @@ model Customer {
   // Payment Terms
   paymentTerms    Int       @default(30) @map("payment_terms") // Days
   creditLimit     Decimal?  @map("credit_limit") @db.Decimal(12, 2)
+
+  // CRM Fields
+  lifecycleStage  LifecycleStage @default(CUSTOMER) @map("lifecycle_stage")
+  source          CustomerSource? @map("source")
+  assignedToUserId String?        @map("assigned_to_user_id")
   
   // Notes
   notes           String?   @db.Text
@@ -245,17 +269,21 @@ model Customer {
   
   organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   customerGroup   CustomerGroup? @relation(fields: [customerGroupId], references: [id])
+  assignedToUser  User?          @relation("AssignedTo", fields: [assignedToUserId], references: [id])
   invoices        Invoice[]
   estimates       Estimate[]
   creditNotes     CreditNote[]
   payments        Payment[]
   contacts        CustomerContact[]
   stripePayments  StripePayment[]
+  interactions    Interaction[]
 
   @@index([organizationId])
   @@index([displayName])
   @@index([mobile])
   @@index([gstNumber])
+  @@index([lifecycleStage])
+  @@index([assignedToUserId])
   @@map("customers")
 }
 
@@ -271,6 +299,43 @@ enum GSTTreatment {
   OVERSEAS                 // Export
   SEZ                      // Special Economic Zone
   DEEMED_EXPORT            // Deemed export
+}
+
+// ============================================
+// INTERACTION MODEL (CRM Activity)
+// ============================================
+model Interaction {
+  id              Int      @id @default(autoincrement())
+  organizationId  String   @map("organization_id")
+  customerId      Int      @map("customer_id")
+  userId          String   @map("user_id")
+
+  type            InteractionType
+  description     String   @db.Text
+  date            DateTime @default(now())
+
+  outcome         String?  // e.g., "Interested", "Call back later"
+
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer        Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user            User         @relation(fields: [userId], references: [id])
+
+  @@index([organizationId])
+  @@index([customerId])
+  @@index([userId])
+  @@map("interactions")
+}
+
+enum InteractionType {
+  CALL
+  EMAIL
+  MEETING
+  NOTE
+  SMS
+  WHATSAPP
 }
 
 // ============================================

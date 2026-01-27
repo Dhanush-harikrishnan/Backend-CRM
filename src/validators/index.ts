@@ -129,6 +129,11 @@ export const createCustomerSchema = z.object({
     pan: panValidator,
     notes: z.string().optional().nullable(),
     groupId: z.number().int().positive().optional().nullable(),
+
+    // CRM
+    lifecycleStage: z.enum(['LEAD', 'PROSPECT', 'CUSTOMER', 'CHURNED']).default('CUSTOMER'),
+    source: z.enum(['WEBSITE', 'REFERRAL', 'ADVERTISEMENT', 'COLD_CALL', 'EVENT', 'OTHER']).optional().nullable(),
+    assignedToUserId: z.string().optional().nullable(),
   }),
 });
 
@@ -143,6 +148,8 @@ export const customerListQuerySchema = z.object({
     customerType: z.enum(['BUSINESS', 'INDIVIDUAL']).optional(),
     groupId: z.string().regex(/^\d+$/).optional(),
     isActive: z.enum(['true', 'false']).optional(),
+    lifecycleStage: z.enum(['LEAD', 'PROSPECT', 'CUSTOMER', 'CHURNED']).optional(),
+    assignedToUserId: z.string().optional(),
   }),
 });
 
@@ -498,6 +505,32 @@ export const reportDateRangeSchema = z.object({
 // ============================================
 // TYPE EXPORTS
 // ============================================
+// ============================================
+// INTERACTION VALIDATION SCHEMAS
+// ============================================
+export const createInteractionSchema = z.object({
+  body: z.object({
+    customerId: z.number().int().positive(),
+    type: z.enum(['CALL', 'EMAIL', 'MEETING', 'NOTE', 'SMS', 'WHATSAPP']),
+    description: z.string().min(1),
+    date: z.string().datetime().optional(),
+    outcome: z.string().optional().nullable(),
+  }),
+});
+
+export const updateInteractionSchema = z.object({
+  params: idParam,
+  body: createInteractionSchema.shape.body.partial().omit({ customerId: true }),
+});
+
+export const interactionListQuerySchema = z.object({
+  query: paginationQuery.merge(dateRangeQuery).extend({
+    customerId: z.string().regex(/^\d+$/).optional(),
+    userId: z.string().optional(),
+    type: z.enum(['CALL', 'EMAIL', 'MEETING', 'NOTE', 'SMS', 'WHATSAPP']).optional(),
+  }),
+});
+
 export type CreateOrganizationInput = z.infer<typeof createOrganizationSchema>['body'];
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>['body'];
 export type CreateProductInput = z.infer<typeof createProductSchema>['body'];
@@ -506,3 +539,4 @@ export type CreateEstimateInput = z.infer<typeof createEstimateSchema>['body'];
 export type CreateCreditNoteInput = z.infer<typeof createCreditNoteSchema>['body'];
 export type CreatePaymentInput = z.infer<typeof createPaymentSchema>['body'];
 export type CreateExpenseInput = z.infer<typeof createExpenseSchema>['body'];
+export type CreateInteractionInput = z.infer<typeof createInteractionSchema>['body'];
