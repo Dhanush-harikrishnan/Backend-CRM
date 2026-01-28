@@ -6,10 +6,12 @@ dist/
 
 # Environment variables
 .env
+.env.local
 
 # IDE
 .vscode/
 .idea/
+.vs/
 
 # Logs
 *.log

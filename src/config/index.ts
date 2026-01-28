@@ -1,7 +1,38 @@
 import dotenv from 'dotenv';
+import { z } from 'zod';
 
 // Load environment variables
 dotenv.config();
+
+// Define environment schema for validation
+const envSchema = z.object({
+  PORT: z.string().regex(/^\d+$/).transform(Number).default('5000'),
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters for security'),
+  JWT_EXPIRES_IN: z.string().default('7d'),
+  FRONTEND_URL: z.string().optional(),
+  RATE_LIMIT_WINDOW_MS: z.string().regex(/^\d+$/).transform(Number).default('900000'),
+  RATE_LIMIT_MAX_REQUESTS: z.string().regex(/^\d+$/).transform(Number).default('100'),
+});
+
+// Validate environment variables
+const validateEnv = () => {
+  try {
+    return envSchema.parse(process.env);
+  } catch (error) {
+    console.error('? Invalid environment variables:');
+    if (error instanceof z.ZodError) {
+      error.errors.forEach((err) => {
+        console.error(`  - ${err.path.join('.')}: ${err.message}`);
+      });
+    }
+    console.error('\n?? Please check your .env file and ensure all required variables are set correctly.');
+    process.exit(1);
+  }
+};
+
+const env = validateEnv();
 
 interface Config {
   port: number;
@@ -18,44 +49,25 @@ interface Config {
     windowMs: number;
     maxRequests: number;
   };
-  stripe: {
-    secretKey: string;
-    publishableKey: string;
-  };
 }
 
 const config: Config = {
-  port: parseInt(process.env.PORT || '5000', 10),
-  nodeEnv: process.env.NODE_ENV || 'development',
-  databaseUrl: process.env.DATABASE_URL || '',
+  port: env.PORT,
+  nodeEnv: env.NODE_ENV,
+  databaseUrl: env.DATABASE_URL,
   jwt: {
-    secret: process.env.JWT_SECRET || 'fallback-secret-change-me',
-    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+    secret: env.JWT_SECRET,
+    expiresIn: env.JWT_EXPIRES_IN,
   },
   cors: {
-    // Support multiple frontend origins (comma-separated in .env)
-    // If no FRONTEND_URL is set, allow common development origins
-    origin: process.env.FRONTEND_URL 
-      ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-      : ['http://localhost:3000', 'http://localhost:5173', 'https://localhost:3000'],
+    origin: env.FRONTEND_URL 
+      ? env.FRONTEND_URL.split(',').map(url => url.trim())
+      : ['http://localhost:3000', 'http://localhost:5173'],
   },
   rateLimit: {
-    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 minutes
-    maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
-  },
-  stripe: {
-    secretKey: process.env.STRIPE_SECRET_KEY || '',
-    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+    windowMs: env.RATE_LIMIT_WINDOW_MS,
+    maxRequests: env.RATE_LIMIT_MAX_REQUESTS,
   },
 };
-
-// Validate critical environment variables
-if (!process.env.DATABASE_URL) {
-  throw new Error('DATABASE_URL environment variable is required');
-}
-
-if (!process.env.JWT_SECRET && config.nodeEnv === 'production') {
-  throw new Error('JWT_SECRET environment variable is required in production');
-}
 
 export default config;

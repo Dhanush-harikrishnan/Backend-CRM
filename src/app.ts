@@ -3,9 +3,11 @@ import helmet from 'helmet';
 import cors from 'cors';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
+import compression from 'compression';
 import config from './config';
 import logger from './config/logger';
 import { errorHandler, notFoundHandler } from './middleware/error.middleware';
+import { requestId, requestTimeout } from './middleware/request.middleware';
 
 // Import routes
 import authRoutes from './routes/auth.routes';
@@ -18,7 +20,6 @@ import creditNoteRoutes from './routes/creditNote.routes';
 import paymentRoutes from './routes/payment.routes';
 import expenseRoutes from './routes/expense.routes';
 import reportRoutes from './routes/report.routes';
-import stripeRoutes from './routes/stripe.routes';
 import interactionRoutes from './routes/interaction.routes';
 import vendorRoutes from './routes/vendor.routes';
 import purchaseRoutes from './routes/purchase.routes';
@@ -38,24 +39,31 @@ app.use(helmet());
 // 2. CORS - Configure Cross-Origin Resource Sharing
 app.use(
   cors({
-    origin: config.cors.origin, // Only allow requests from your frontend
+    origin: config.cors.origin,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-    exposedHeaders: ['Content-Length', 'Content-Type'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Request-ID'],
+    exposedHeaders: ['Content-Length', 'Content-Type', 'X-Request-ID'],
   })
 );
 
-// 3. RATE LIMITING - Prevent DDoS and brute force attacks
+// 3. COMPRESSION - Compress all responses
+app.use(compression());
+
+// 4. REQUEST ID - Add unique ID to each request for tracking
+app.use(requestId);
+
+// 5. REQUEST TIMEOUT - Prevent hanging requests (30 seconds)
+app.use(requestTimeout(30000));
+
+// 6. RATE LIMITING - Prevent DDoS and brute force attacks
 const limiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
   max: config.rateLimit.maxRequests,
   message: 'Too many requests from this IP, please try again later',
-  standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
-  legacyHeaders: false, // Disable `X-RateLimit-*` headers
-  // Skip rate limiting for certain IPs (optional)
+  standardHeaders: true,
+  legacyHeaders: false,
   skip: (req) => {
-    // Example: Skip for localhost in development
     if (config.nodeEnv === 'development' && req.ip === '127.0.0.1') {
       return true;
     }
@@ -63,7 +71,6 @@ const limiter = rateLimit({
   },
 });
 
-// Apply to all requests
 app.use(limiter);
 
 // ============================================
@@ -75,11 +82,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // ============================================
 // LOGGING MIDDLEWARE
 // ============================================
-// HTTP request logger
 if (config.nodeEnv === 'development') {
-  app.use(morgan('dev')); // Concise output for development
+  app.use(morgan('dev'));
 } else {
-  // Production logging format
   app.use(
     morgan('combined', {
       stream: {
@@ -98,13 +103,14 @@ app.get('/health', (_req: Request, res: Response) => {
     message: 'Server is running',
     timestamp: new Date().toISOString(),
     environment: config.nodeEnv,
+    uptime: process.uptime(),
   });
 });
 
 // ============================================
 // API ROUTES
 // ============================================
-const API_PREFIX = '/api';
+const API_PREFIX = '/api/v1';
 
 // Auth & Organization
 app.use(`${API_PREFIX}/auth`, authRoutes);
@@ -124,11 +130,23 @@ app.use(`${API_PREFIX}/expenses`, expenseRoutes);
 app.use(`${API_PREFIX}/vendors`, vendorRoutes);
 app.use(`${API_PREFIX}/purchases`, purchaseRoutes);
 
-// Stripe Payments (UPI, Card)
-app.use(`${API_PREFIX}/stripe`, stripeRoutes);
-
 // Reports & Dashboard
 app.use(`${API_PREFIX}/reports`, reportRoutes);
+
+// Backward compatibility - also support /api without version
+app.use('/api/auth', authRoutes);
+app.use('/api/organizations', organizationRoutes);
+app.use('/api/customers', customerRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/interactions', interactionRoutes);
+app.use('/api/invoices', invoiceRoutes);
+app.use('/api/estimates', estimateRoutes);
+app.use('/api/credit-notes', creditNoteRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/expenses', expenseRoutes);
+app.use('/api/vendors', vendorRoutes);
+app.use('/api/purchases', purchaseRoutes);
+app.use('/api/reports', reportRoutes);
 
 // ============================================
 // ROOT ENDPOINT
@@ -138,6 +156,7 @@ app.get('/', (_req: Request, res: Response) => {
     success: true,
     message: 'SaaS Invoice Management API',
     version: '2.0.0',
+    apiVersion: 'v1',
     features: [
       'Multi-tenant organization support',
       'Full GST compliance (CGST/SGST/IGST)',
@@ -147,19 +166,21 @@ app.get('/', (_req: Request, res: Response) => {
       'Comprehensive reports & dashboard',
       'Product inventory management',
       'Customer management with groups',
+      'Vendor & purchase order management',
+      'CRM interactions tracking',
     ],
-    documentation: '/api',
-    payment: 'Cash only (UPI/Card coming soon)',
+    endpoints: {
+      health: '/health',
+      apiV1: '/api/v1',
+      apiLegacy: '/api',
+    },
   });
 });
 
 // ============================================
 // ERROR HANDLING MIDDLEWARE
 // ============================================
-// 404 Handler - Must be after all routes
 app.use(notFoundHandler);
-
-// Global Error Handler - Must be last
 app.use(errorHandler);
 
 export default app;

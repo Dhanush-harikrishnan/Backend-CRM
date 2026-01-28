@@ -1,7 +1,15 @@
 import winston from 'winston';
 import config from './index';
+import fs from 'fs';
+import path from 'path';
 
 const { combine, timestamp, printf, colorize, errors } = winston.format;
+
+// Ensure logs directory exists
+const logsDir = path.join(process.cwd(), 'logs');
+if (!fs.existsSync(logsDir)) {
+  fs.mkdirSync(logsDir, { recursive: true });
+}
 
 // Define custom log format
 const logFormat = printf(({ level, message, timestamp, stack }) => {
@@ -26,23 +34,23 @@ const logger = winston.createLogger({
     }),
     // File transport for errors
     new winston.transports.File({
-      filename: 'logs/error.log',
+      filename: path.join(logsDir, 'error.log'),
       level: 'error',
       maxsize: 5242880, // 5MB
       maxFiles: 5,
     }),
     // File transport for all logs
     new winston.transports.File({
-      filename: 'logs/combined.log',
+      filename: path.join(logsDir, 'combined.log'),
       maxsize: 5242880,
       maxFiles: 5,
     }),
   ],
   exceptionHandlers: [
-    new winston.transports.File({ filename: 'logs/exceptions.log' }),
+    new winston.transports.File({ filename: path.join(logsDir, 'exceptions.log') }),
   ],
   rejectionHandlers: [
-    new winston.transports.File({ filename: 'logs/rejections.log' }),
+    new winston.transports.File({ filename: path.join(logsDir, 'rejections.log') }),
   ],
 });
 

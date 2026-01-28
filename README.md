@@ -1,52 +1,193 @@
-# Invoice Management System - Backend API
+# Invoice Management Backend API
 
-A comprehensive multi-tenant SaaS invoice management system built with Node.js, Express, TypeScript, and PostgreSQL with Prisma ORM. Similar to Zoho Invoice with GST/tax support for Indian businesses.
+Production-ready Invoice & CRM Management REST API with Multi-tenant support, GST compliance, and comprehensive business features.
 
-## 🚀 Quick Start
+## 🚀 Features
 
-### Prerequisites
+- ✅ **Multi-tenant** - Organizations with role-based access
+- ✅ **Authentication** - JWT-based secure authentication
+- ✅ **GST Compliance** - Full Indian GST support (CGST/SGST/IGST)
+- ✅ **Invoicing** - Create, manage, and track invoices
+- ✅ **Estimates** - Generate and convert to invoices
+- ✅ **Credit Notes** - Handle returns and adjustments
+- ✅ **Customers** - Complete customer management with groups
+- ✅ **Products** - Inventory management with categories
+- ✅ **Payments** - Cash payment tracking
+- ✅ **Expenses** - Track expenses with categories
+- ✅ **Vendors** - Manage vendors and purchases
+- ✅ **Reports** - Sales, P&L, GST reports, and dashboard
+- ✅ **CRM** - Customer interaction tracking
+
+## 📋 Prerequisites
+
 - Node.js 18+
-- PostgreSQL 14+
+- PostgreSQL database (Neon.tech recommended)
 - npm or yarn
 
-### Installation
+## ⚡ Quick Start
 
+### 1. Install Dependencies
 ```bash
-# Clone and install dependencies
 npm install
+```
 
-# Setup environment variables
+### 2. Setup Environment Variables
+```bash
 cp .env.example .env
 # Edit .env with your database URL and JWT secret
-
-# Generate Prisma client and run migrations
-npx prisma generate
-npx prisma migrate dev
-
-# Seed default data (optional)
-npx prisma db seed
-
-# Start development server
-npm run dev
 ```
 
-Server runs at `http://localhost:5000`
-
-### Environment Variables
-
+Required environment variables:
 ```env
-DATABASE_URL="postgresql://user:password@localhost:5432/invoice_db"
-JWT_SECRET="your-super-secret-jwt-key"
-JWT_EXPIRES_IN="7d"
-PORT=5000
-NODE_ENV=development
-FRONTEND_URL="http://localhost:3000"
-
-# Stripe Integration (for UPI/Card payments)
-STRIPE_SECRET_KEY="sk_test_..."
-STRIPE_PUBLISHABLE_KEY="pk_test_..."
-STRIPE_WEBHOOK_SECRET="whsec_..."
+DATABASE_URL="postgresql://user:pass@host/db?sslmode=require"
+JWT_SECRET="your-32-plus-character-secret-key"
+FRONTEND_URL="https://your-frontend-url.com"
 ```
+
+### 3. Setup Database
+```bash
+npx prisma generate
+npx prisma migrate deploy
+```
+
+### 4. Start Server
+```bash
+# Development
+npm run dev
+
+# Production
+npm run build
+npm start
+```
+
+## 🌐 API Endpoints
+
+Base URL: `/api/v1` (also supports `/api` for backward compatibility)
+
+### Authentication
+- `POST /api/v1/auth/register` - Register new user
+- `POST /api/v1/auth/login` - Login
+- `GET /api/v1/auth/profile` - Get profile (protected)
+
+### Organizations
+- `GET /api/v1/organizations/:id` - Get organization
+- `PUT /api/v1/organizations/:id` - Update organization
+
+### Customers
+- `POST /api/v1/customers` - Create customer
+- `GET /api/v1/customers` - List customers
+- `GET /api/v1/customers/:id` - Get customer
+- `PUT /api/v1/customers/:id` - Update customer
+- `DELETE /api/v1/customers/:id` - Delete customer
+
+### Products
+- `POST /api/v1/products` - Create product
+- `GET /api/v1/products` - List products
+- `GET /api/v1/products/:id` - Get product
+- `PUT /api/v1/products/:id` - Update product
+
+### Invoices
+- `POST /api/v1/invoices` - Create invoice
+- `GET /api/v1/invoices` - List invoices
+- `GET /api/v1/invoices/:id` - Get invoice
+- `PUT /api/v1/invoices/:id` - Update invoice
+- `POST /api/v1/invoices/:id/payments` - Record payment
+- `DELETE /api/v1/invoices/:id` - Delete invoice
+
+### Reports
+- `GET /api/v1/reports/dashboard` - Dashboard summary
+- `GET /api/v1/reports/sales` - Sales report
+- `GET /api/v1/reports/profit-loss` - P&L report
+- `GET /api/v1/reports/gst` - GST report
+
+## 🔒 Authentication
+
+All protected endpoints require Bearer token:
+```
+Authorization: Bearer <your-jwt-token>
+```
+
+## 📦 Deployment on Render
+
+### 1. Push to GitHub
+```bash
+git add .
+git commit -m "Ready for deployment"
+git push origin main
+```
+
+### 2. Deploy on Render
+1. Go to [Render.com](https://render.com)
+2. Create new **Web Service**
+3. Connect your GitHub repository
+4. Configure:
+   - **Build Command**: `npm install && npx prisma generate && npm run build`
+   - **Start Command**: `npx prisma migrate deploy && npm start`
+   - **Environment**: Node
+
+### 3. Add Environment Variables in Render
+```
+DATABASE_URL=your_neon_database_url
+JWT_SECRET=your_secure_jwt_secret_32_chars_minimum
+FRONTEND_URL=https://your-frontend-url.vercel.app
+NODE_ENV=production
+PORT=5000
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+```
+
+### 4. Deploy!
+Click **Create Web Service** and wait for deployment.
+
+## 🛠️ Tech Stack
+
+- **Runtime**: Node.js with TypeScript
+- **Framework**: Express.js
+- **Database**: PostgreSQL with Prisma ORM
+- **Authentication**: JWT (jsonwebtoken)
+- **Validation**: Zod
+- **Security**: Helmet, CORS, Rate Limiting
+- **Logging**: Winston
+- **Performance**: Compression
+
+## 📊 Project Structure
+
+```
+Backend-CRM/
+├── src/
+│   ├── config/          # Configuration files
+│   ├── controllers/     # Route controllers
+│   ├── middleware/      # Custom middleware
+│   ├── routes/          # API routes
+│   ├── services/        # Business logic
+│   ├── validators/      # Request validation
+│   ├── app.ts          # Express app setup
+│   └── server.ts       # Server entry point
+├── prisma/
+│   ├── schema.prisma   # Database schema
+│   └── seed.ts         # Database seeding
+└── package.json
+```
+
+## 🔧 Available Scripts
+
+```bash
+npm run dev              # Start development server
+npm run build            # Build for production
+npm start                # Start production server
+npm run prisma:generate  # Generate Prisma client
+npm run prisma:migrate   # Run migrations
+npm run prisma:studio    # Open Prisma Studio
+npm run prisma:seed      # Seed database
+```
+
+## 📝 License
+
+MIT
+
+## 🤝 Support
+
+For issues or questions, please check the logs in the `/logs` directory or create an issue on GitHub.
 
 ---
 
